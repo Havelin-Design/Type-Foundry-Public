@@ -11,9 +11,10 @@ Every format is read into, and written from, the same `typefoundry.font` model. 
 | `.ttf` (TrueType) | yes | yes | Import decomposes composites and keeps names. Export turns cubics into quadratics. |
 | `.otf` (OpenType CFF or CFF2) | yes | no | Cubic outlines come in as two off-curve points. |
 | `.ttc`, `.otc` (collections) | face 0 | no | Other faces are not read yet. |
-| `.woff`, `.woff2` | refused | no | The error says to convert to `.ttf` or `.otf` first. |
+| `.woff` (WOFF 1) | yes | no | Tables are inflated and rebuilt into an sfnt, then read like `.ttf` or `.otf`. |
+| `.woff2` | refused | no | The error says to convert it to `.ttf` or `.otf` first. |
 
-`ttf-parser` 0.25 reads binary fonts. It was already in the workspace as the export test reader. It draws outlines through a pen, so the importer collects `move`, `line`, `quad`, `curve`, and `close` into closed contours. Reading the `post` table in one pass keeps a 45,000-glyph CJK collection to about a third of a second. The parser's own name lookup is quadratic.
+`ttf-parser` 0.25 reads binary fonts. It was already in the workspace as the export test reader. WOFF 1 is the same tables inside a zlib wrapper, so `flate2` inflates them and the importer rebuilds a normal sfnt before the parser reads it. The parser draws outlines through a pen, so the importer collects `move`, `line`, `quad`, `curve`, and `close` into closed contours. Reading the `post` table in one pass keeps a 45,000-glyph CJK collection to about a third of a second. The parser's own name lookup is quadratic.
 
 ## What a binary import loses
 
@@ -29,9 +30,8 @@ Two binary fonts blend only when their outlines are compatible, as with any othe
 
 ## Possible next steps, in order of value
 
-1. **WOFF 1.** A zlib wrapper around the same tables. It needs `flate2` and about 60 lines to rebuild the sfnt, then the existing importer reads it.
-2. **Pick a face in a collection.** Add an optional `face` index to `open`, `check`, and `blend`, and list the faces in the error when a collection has more than one.
-3. **Variable font instances and masters.** `ttf-parser` can set axis coordinates. Reading named instances as separate sources would give blend real masters from one file, which is where it matters most.
-4. **WOFF 2.** Brotli plus the `glyf` and `loca` transforms. It needs a Brotli crate and a table rebuild, so it costs more than WOFF 1.
-5. **OTF export.** CFF writing keeps cubics exact, where the TrueType path approximates them.
-6. **Not planned:** Type 1 (`.pfa`, `.pfb`), `.dfont`, and bitmap formats. They are legacy, and a converter handles them better than this kit would.
+1. **Pick a face in a collection.** Add an optional `face` index to `open`, `check`, and `blend`, and list the faces in the error when a collection has more than one.
+2. **Variable font instances and masters.** `ttf-parser` can set axis coordinates. Reading named instances as separate sources would give blend real masters from one file, which is where it matters most.
+3. **WOFF 2.** Brotli plus the `glyf` and `loca` transforms. It needs a Brotli crate and a table rebuild, so it costs more than WOFF 1.
+4. **OTF export.** CFF writing keeps cubics exact, where the TrueType path approximates them.
+5. **Not planned:** Type 1 (`.pfa`, `.pfb`), `.dfont`, and bitmap formats. They are legacy, and a converter handles them better than this kit would.

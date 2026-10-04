@@ -126,8 +126,8 @@ impl Font {
         Ok(font)
     }
 
-    /// Read `typefoundry.font` JSON, a `.ufo` directory, or face 0 of a `.ttf`, `.otf`, `.ttc`,
-    /// or `.otc` file.
+    /// Read `typefoundry.font` JSON, a `.ufo` directory, face 0 of a `.ttf`, `.otf`, `.ttc`,
+    /// or `.otc` file, or a WOFF 1 `.woff`.
     pub fn load(path: &Path) -> Result<Self, FoundryError> {
         if crate::ufo::is_ufo_path(path) {
             return crate::ufo::load_ufo(path);

@@ -195,7 +195,7 @@ foundry — local type foundry commands
   foundry run [--file FILE]
   foundry mcp
 
-FILE, A, and B can be .json, .ufo, .ttf, .otf, .ttc, or .otc. --out writes .json, .ufo, or .ttf.
+FILE, A, and B can be .json, .ufo, .ttf, .otf, .ttc, .otc, or .woff. --out writes .json, .ufo, or .ttf.
 `run` reads JSON commands from stdin, or from --file. See documents/api.md.
 `mcp` serves the same session as a stdio MCP server, like the foundry-mcp binary.
 "
