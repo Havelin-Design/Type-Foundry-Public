@@ -9,6 +9,19 @@ use crate::font::{Contour, Font, Glyph, Point, PointKind, validate_glyph};
 /// A 2D affine matrix `[a, b, c, d, e, f]`: `x' = a*x + c*y + e`, `y' = b*x + d*y + f`.
 pub type Matrix = [f64; 6];
 
+/// Where a transform's matrix is centered, per glyph.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Anchor {
+    /// The matrix is used as given, about font (0, 0).
+    #[default]
+    Origin,
+    /// The center of the points' bounding box: the glyph's, or the selection's.
+    Center,
+    /// Half the advance across, and the vertical center of the points.
+    Advance,
+}
+
 /// Optional new vertical metrics. `None` keeps the current value.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct MetricsUpdate {
@@ -335,6 +348,18 @@ impl Font {
         matrix: Matrix,
         advance: bool,
     ) -> Result<Vec<String>, FoundryError> {
+        self.transform_anchored(names, points, matrix, advance, Anchor::Origin)
+    }
+
+    /// [`Font::transform`] with the matrix centered on `anchor`, worked out for each glyph.
+    pub fn transform_anchored(
+        &mut self,
+        names: Option<&[String]>,
+        points: Option<&[(usize, usize)]>,
+        matrix: Matrix,
+        advance: bool,
+        anchor: Anchor,
+    ) -> Result<Vec<String>, FoundryError> {
         finite(&matrix)?;
         let targets = self.resolve_names(names)?;
         if let Some(points) = points {
@@ -346,8 +371,13 @@ impl Font {
             let glyph = self.glyph_or_err(name)?;
             check_refs(glyph, points)?;
             let unique: BTreeSet<(usize, usize)> = points.iter().copied().collect();
+            let chosen: Vec<&Point> = unique
+                .iter()
+                .map(|(contour, point)| &glyph.contours[*contour].points[*point])
+                .collect();
+            let centered = centered(&matrix, anchor_point(anchor, &chosen, glyph.advance));
             for (contour, point) in unique {
-                apply(&mut glyph.contours[contour].points[point], &matrix);
+                apply(&mut glyph.contours[contour].points[point], &centered);
             }
             return Ok(targets);
         }
@@ -357,9 +387,15 @@ impl Font {
             if !targets.contains(&glyph.name) {
                 continue;
             }
+            let all: Vec<&Point> = glyph
+                .contours
+                .iter()
+                .flat_map(|contour| contour.points.iter())
+                .collect();
+            let centered = centered(&matrix, anchor_point(anchor, &all, glyph.advance));
             for contour in &mut glyph.contours {
                 for point in &mut contour.points {
-                    apply(point, &matrix);
+                    apply(point, &centered);
                 }
             }
             if advance {
@@ -433,6 +469,38 @@ fn apply(point: &mut Point, [a, b, c, d, e, f]: &Matrix) {
     let (x, y) = (point.x, point.y);
     point.x = a * x + c * y + e;
     point.y = b * x + d * y + f;
+}
+
+fn anchor_point(anchor: Anchor, points: &[&Point], advance: f64) -> (f64, f64) {
+    let bounds = points
+        .iter()
+        .fold(None, |acc: Option<(f64, f64, f64, f64)>, p| {
+            Some(match acc {
+                None => (p.x, p.y, p.x, p.y),
+                Some((x0, y0, x1, y1)) => (x0.min(p.x), y0.min(p.y), x1.max(p.x), y1.max(p.y)),
+            })
+        });
+    let (cx, cy) = bounds.map_or((advance / 2.0, 0.0), |(x0, y0, x1, y1)| {
+        ((x0 + x1) / 2.0, (y0 + y1) / 2.0)
+    });
+    match anchor {
+        Anchor::Origin => (0.0, 0.0),
+        Anchor::Center => (cx, cy),
+        Anchor::Advance => (advance / 2.0, cy),
+    }
+}
+
+/// `matrix` applied about `(cx, cy)` instead of the origin.
+fn centered(matrix: &Matrix, (cx, cy): (f64, f64)) -> Matrix {
+    let [a, b, c, d, e, f] = *matrix;
+    [
+        a,
+        b,
+        c,
+        d,
+        e + cx - a * cx - c * cy,
+        f + cy - b * cx - d * cy,
+    ]
 }
 
 fn lerp(a: (f64, f64), b: (f64, f64), t: f64) -> (f64, f64) {
@@ -681,6 +749,34 @@ mod tests {
                 .is_err(),
             "a selection needs one glyph"
         );
+        // Flip about the advance middle: the square at x 3..100 in a 250 advance.
+        let mut flipped = font.clone();
+        flipped
+            .transform_anchored(
+                Some(&names),
+                None,
+                [-1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+                false,
+                Anchor::Advance,
+            )
+            .unwrap();
+        let points = xy(&flipped);
+        assert_eq!(
+            points[1].0, 200.0,
+            "x 50, after the half-width scale, mirrors to 250 - 50"
+        );
+        // Rotate 180 degrees about the center: the box maps onto itself.
+        let mut turned = font_with(vec![square()]);
+        turned
+            .transform_anchored(
+                None,
+                None,
+                [-1.0, 0.0, 0.0, -1.0, 0.0, 0.0],
+                false,
+                Anchor::Center,
+            )
+            .unwrap();
+        assert_eq!(xy(&turned)[0], (100.0, 100.0, PointKind::On));
         font.round_coordinates(None).unwrap();
         assert_eq!(xy(&font)[0], (3.0, 1.0, PointKind::On));
         assert!(

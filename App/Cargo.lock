@@ -1032,6 +1032,7 @@ dependencies = [
  "eframe",
  "foundry-api",
  "rfd",
+ "serde",
  "serde_json",
 ]
 

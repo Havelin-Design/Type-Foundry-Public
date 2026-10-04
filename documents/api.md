@@ -63,6 +63,61 @@ foundry run --file commands.jsonl
 {"op":"move_point","name":"H","contour":0,"point":0,"x":110,"y":20}
 ```
 
+### Editing
+
+These commands change the open font. Each one checks its input before it changes anything, so a failed edit leaves the font as it was. Points are addressed as `[contour, point]` with zero-based indexes.
+
+```json
+{"op":"move_points","name":"a","points":[[0,1],[0,2]],"dx":10,"dy":0}
+{"op":"insert_point","name":"a","contour":0,"index":3,"x":120,"y":40,"kind":"on","smooth":false}
+{"op":"split_segment","name":"a","contour":0,"point":4,"t":0.5}
+{"op":"delete_points","name":"a","points":[[0,2]]}
+{"op":"set_point","name":"a","contour":0,"point":1,"kind":"off","smooth":false}
+{"op":"add_contour","name":"a","contour":{"closed":false,"points":[{"x":0,"y":0,"kind":"on","smooth":false}]}}
+{"op":"set_closed","name":"a","contour":1,"closed":true}
+{"op":"reverse_contour","name":"a","contour":0}
+```
+
+- `insert_point` puts a point before `index`. An `index` equal to the point count appends. `kind` defaults to `on`.
+- `split_segment` cuts the segment that ends at on-curve point `point`, at `t` from 0 to 1. A line gains one point. A quadratic or cubic is split exactly, so the shape does not change. The response gives the new on-curve point's index.
+- `delete_points` removes points. A contour left empty is removed.
+- `set_point` changes `kind`, `smooth`, or both. Off-curve points are never smooth.
+- `reverse_contour` keeps a closed contour's first point first.
+
+```json
+{"op":"delete_glyph","name":"a"}
+{"op":"rename_glyph","name":"a","new_name":"a.alt"}
+{"op":"set_unicode","name":"a.alt","unicode":null}
+{"op":"rename_font","name":"Wide Display"}
+{"op":"set_metrics","x_height":520,"cap_height":710}
+```
+
+`set_metrics` takes any of `ascender`, `descender`, `cap_height`, and `x_height`, and leaves the others alone.
+
+`transform` applies an affine matrix `[a, b, c, d, e, f]`, so `x' = a*x + c*y + e` and `y' = b*x + d*y + f`. Without `names` it changes every glyph. `points` limits it to a selection in one glyph. `anchor` is where the matrix is centered, worked out per glyph: `origin` (the default, font 0,0), `center` (the center of the points), or `advance` (half the advance across, centered vertically on the points). With `advance: true`, each advance is scaled by the matrix's horizontal scale.
+
+```json
+{"op":"transform","matrix":[1,0,0.2126,1,0,0]}
+{"op":"transform","names":["a"],"matrix":[-1,0,0,1,0,0],"anchor":"advance"}
+{"op":"transform","names":["a"],"points":[[0,1]],"matrix":[1,0,0,1,0,-10]}
+{"op":"round_coordinates","names":["a"]}
+```
+
+The first line slants every glyph 12 degrees, the way the window's Slant effect does. `round_coordinates` rounds points and advances to whole units, for the named glyphs or all of them.
+
+`index` lists every glyph's name, Unicode, advance, contour count, and point count in one response.
+
+### Undo
+
+```json
+{"op":"undo"}
+{"op":"redo"}
+{"op":"checkpoint"}
+{"op":"history"}
+```
+
+Every edit above, plus `put_glyph`, `set_advance`, and `move_point`, can be undone. The session keeps 200 steps. Consecutive moves of the same points, consecutive `set_advance` on one glyph, and consecutive `set_metrics` share one step, so a drag or a slider undoes in one go. `checkpoint` ends that run. `create`, `open`, and `blend` start a fresh history. `history` returns `{"undo":n,"redo":n}`.
+
 `check` compares two files. `blend` writes a new file and opens it in the session. `t` defaults to 0.5. `t` is 0 at the first font and 1 at the second. Values outside that range extrapolate.
 
 ```json

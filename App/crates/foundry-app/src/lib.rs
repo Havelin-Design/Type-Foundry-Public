@@ -74,6 +74,7 @@ impl Bounds {
 pub struct OutlinePoint {
     pub at: Pt,
     pub on: bool,
+    pub smooth: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -86,6 +87,7 @@ pub struct OutlineContour {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Outline {
     pub name: String,
+    pub unicode: Option<u32>,
     pub advance: f64,
     pub contours: Vec<OutlineContour>,
 }
@@ -104,6 +106,7 @@ impl Outline {
                         Some(OutlinePoint {
                             at: Pt::new(point["x"].as_f64()?, point["y"].as_f64()?),
                             on: point["kind"].as_str()? == "on",
+                            smooth: point["smooth"].as_bool().unwrap_or(false),
                         })
                     })
                     .collect::<Option<Vec<_>>>()?;
@@ -115,6 +118,9 @@ impl Outline {
             .collect::<Option<Vec<_>>>()?;
         Some(Self {
             name: data["name"].as_str()?.to_string(),
+            unicode: data["unicode"]
+                .as_u64()
+                .and_then(|code| u32::try_from(code).ok()),
             advance: data["advance"].as_f64()?,
             contours,
         })
@@ -140,7 +146,7 @@ impl Outline {
 }
 
 /// A point address, as `move_point` takes it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Handle {
     pub contour: usize,
     pub point: usize,
@@ -363,6 +369,314 @@ pub fn scanline_spans(polygons: &[Vec<Pt>], y: f64) -> Vec<(f64, f64)> {
     spans
 }
 
+/// A 2D affine matrix `[a, b, c, d, e, f]`, the same layout as the `transform` command:
+/// `x' = a*x + c*y + e`, `y' = b*x + d*y + f`.
+pub type Matrix = [f64; 6];
+
+pub mod matrix {
+    use super::{Matrix, Pt};
+
+    pub const IDENTITY: Matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+
+    pub fn apply(m: &Matrix, p: Pt) -> Pt {
+        Pt::new(
+            m[0] * p.x + m[2] * p.y + m[4],
+            m[1] * p.x + m[3] * p.y + m[5],
+        )
+    }
+
+    /// `first`, then `second`.
+    pub fn then(first: &Matrix, second: &Matrix) -> Matrix {
+        let [a1, b1, c1, d1, e1, f1] = *first;
+        let [a2, b2, c2, d2, e2, f2] = *second;
+        [
+            a2 * a1 + c2 * b1,
+            b2 * a1 + d2 * b1,
+            a2 * c1 + c2 * d1,
+            b2 * c1 + d2 * d1,
+            a2 * e1 + c2 * f1 + e2,
+            b2 * e1 + d2 * f1 + f2,
+        ]
+    }
+
+    pub fn translate(dx: f64, dy: f64) -> Matrix {
+        [1.0, 0.0, 0.0, 1.0, dx, dy]
+    }
+
+    /// Scale about `center`.
+    pub fn scale(sx: f64, sy: f64, center: Pt) -> Matrix {
+        around(&[sx, 0.0, 0.0, sy, 0.0, 0.0], center)
+    }
+
+    /// Rotate counter-clockwise by `degrees` about `center`.
+    pub fn rotate(degrees: f64, center: Pt) -> Matrix {
+        let (sin, cos) = degrees.to_radians().sin_cos();
+        around(&[cos, sin, -sin, cos, 0.0, 0.0], center)
+    }
+
+    /// Slant like an oblique: x moves right by `tan(degrees) * y`, so the baseline stays put.
+    pub fn slant(degrees: f64) -> Matrix {
+        [1.0, 0.0, degrees.to_radians().tan(), 1.0, 0.0, 0.0]
+    }
+
+    pub fn flip_horizontal(center_x: f64) -> Matrix {
+        [-1.0, 0.0, 0.0, 1.0, 2.0 * center_x, 0.0]
+    }
+
+    pub fn flip_vertical(center_y: f64) -> Matrix {
+        [1.0, 0.0, 0.0, -1.0, 0.0, 2.0 * center_y]
+    }
+
+    /// `m` applied about `center` instead of the origin.
+    pub fn around(m: &Matrix, center: Pt) -> Matrix {
+        then(
+            &then(&translate(-center.x, -center.y), m),
+            &translate(center.x, center.y),
+        )
+    }
+}
+
+impl Outline {
+    /// A copy with `m` applied to every point, or only to `only` when given.
+    pub fn transformed(&self, m: &Matrix, only: Option<&[Handle]>) -> Outline {
+        let mut out = self.clone();
+        for (contour_index, contour) in out.contours.iter_mut().enumerate() {
+            for (point_index, point) in contour.points.iter_mut().enumerate() {
+                let chosen = only.is_none_or(|handles| {
+                    handles.contains(&Handle {
+                        contour: contour_index,
+                        point: point_index,
+                    })
+                });
+                if chosen {
+                    point.at = matrix::apply(m, point.at);
+                }
+            }
+        }
+        out
+    }
+
+    /// The box around the points only, or `None` for an empty glyph.
+    pub fn ink_bounds(&self) -> Option<Bounds> {
+        let mut points = self
+            .contours
+            .iter()
+            .flat_map(|contour| contour.points.iter().map(|point| point.at));
+        let first = points.next()?;
+        let mut bounds = Bounds {
+            min: first,
+            max: first,
+        };
+        for point in points {
+            bounds.include(point);
+        }
+        Some(bounds)
+    }
+
+    pub fn handles(&self) -> Vec<Handle> {
+        self.contours
+            .iter()
+            .enumerate()
+            .flat_map(|(contour, found)| {
+                (0..found.points.len()).map(move |point| Handle { contour, point })
+            })
+            .collect()
+    }
+}
+
+/// Where an effect is centered, matching the `transform` command's `anchor`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Anchor {
+    Origin,
+    Center,
+    Advance,
+}
+
+impl Anchor {
+    /// The name the `transform` command takes.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Origin => "origin",
+            Self::Center => "center",
+            Self::Advance => "advance",
+        }
+    }
+
+    /// The pivot for this outline, or for `only` its chosen points, in font units.
+    pub fn point(self, outline: &Outline, only: Option<&[Handle]>) -> Pt {
+        let chosen: Vec<Pt> = match only {
+            Some(handles) => handles
+                .iter()
+                .filter_map(|handle| outline.point(*handle).map(|point| point.at))
+                .collect(),
+            None => outline
+                .contours
+                .iter()
+                .flat_map(|contour| contour.points.iter().map(|point| point.at))
+                .collect(),
+        };
+        let center = chosen.first().map(|first| {
+            let (mut lo, mut hi) = (*first, *first);
+            for p in &chosen {
+                lo = Pt::new(lo.x.min(p.x), lo.y.min(p.y));
+                hi = Pt::new(hi.x.max(p.x), hi.y.max(p.y));
+            }
+            Pt::new((lo.x + hi.x) / 2.0, (lo.y + hi.y) / 2.0)
+        });
+        let center = center.unwrap_or(Pt::new(outline.advance / 2.0, 0.0));
+        match self {
+            Self::Origin => Pt::new(0.0, 0.0),
+            Self::Center => center,
+            Self::Advance => Pt::new(outline.advance / 2.0, center.y),
+        }
+    }
+}
+
+/// Handles whose screen position falls inside the box spanned by two screen corners.
+pub fn handles_in_rect(outline: &Outline, view: &Viewport, a: Pt, b: Pt) -> Vec<Handle> {
+    let (min_x, max_x) = (a.x.min(b.x), a.x.max(b.x));
+    let (min_y, max_y) = (a.y.min(b.y), a.y.max(b.y));
+    outline
+        .handles()
+        .into_iter()
+        .filter(|handle| {
+            outline.point(*handle).is_some_and(|point| {
+                let at = view.to_screen(point.at);
+                (min_x..=max_x).contains(&at.x) && (min_y..=max_y).contains(&at.y)
+            })
+        })
+        .collect()
+}
+
+/// A place on an outline segment, as `split_segment` takes it: the contour, the on-curve point
+/// that ends the segment, and the curve parameter.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SegmentHit {
+    pub contour: usize,
+    pub end: usize,
+    pub t: f64,
+    pub at: Pt,
+}
+
+/// The nearest point on any segment within `radius` screen points of `screen`.
+pub fn nearest_segment(
+    outline: &Outline,
+    view: &Viewport,
+    screen: Pt,
+    radius: f64,
+) -> Option<SegmentHit> {
+    const SAMPLES: usize = 64;
+    let mut best: Option<(f64, SegmentHit)> = None;
+    for (contour_index, contour) in outline.contours.iter().enumerate() {
+        let count = contour.points.len();
+        for (end, point) in contour.points.iter().enumerate() {
+            if !point.on {
+                continue;
+            }
+            // Walk back to the previous on-curve point.
+            let mut offs = Vec::new();
+            let mut cursor = end;
+            let start = loop {
+                if cursor == 0 {
+                    if !contour.closed {
+                        break None;
+                    }
+                    cursor = count;
+                }
+                cursor -= 1;
+                if cursor == end {
+                    break None;
+                }
+                if contour.points[cursor].on {
+                    break Some(cursor);
+                }
+                offs.push(contour.points[cursor].at);
+            };
+            let Some(start) = start else {
+                continue;
+            };
+            offs.reverse();
+            if offs.len() > 2 {
+                continue;
+            }
+            let p0 = contour.points[start].at;
+            let p3 = point.at;
+            for step in 1..SAMPLES {
+                let t = step as f64 / SAMPLES as f64;
+                let at = match offs.as_slice() {
+                    [] => p0.lerp(p3, t),
+                    [c] => p0.lerp(*c, t).lerp(c.lerp(p3, t), t),
+                    [c1, c2] => cubic(p0, *c1, *c2, p3, t),
+                    _ => continue,
+                };
+                let distance = view.to_screen(at).distance(screen);
+                if distance <= radius && best.is_none_or(|(d, _)| distance < d) {
+                    best = Some((
+                        distance,
+                        SegmentHit {
+                            contour: contour_index,
+                            end,
+                            t,
+                            at,
+                        },
+                    ));
+                }
+            }
+        }
+    }
+    best.map(|(_, hit)| hit)
+}
+
+/// Draw the closed contours of `outline` into a `width` x `height` coverage mask (0 to 255,
+/// row 0 at the top). `frame` is the font-unit box that fills the mask.
+pub fn rasterize(outline: &Outline, frame: Bounds, width: usize, height: usize) -> Vec<u8> {
+    const SUB: usize = 4;
+    let mut mask = vec![0u8; width * height];
+    if width == 0 || height == 0 || frame.width() <= 0.0 || frame.height() <= 0.0 {
+        return mask;
+    }
+    let scale = (width as f64 / frame.width()).min(height as f64 / frame.height());
+    let pad_x = (width as f64 - frame.width() * scale) / 2.0;
+    let pad_y = (height as f64 - frame.height() * scale) / 2.0;
+    let polygons: Vec<Vec<Pt>> = outline
+        .contours
+        .iter()
+        .filter(|contour| contour.closed)
+        .map(|contour| {
+            flatten(contour, 12)
+                .into_iter()
+                .map(|p| {
+                    Pt::new(
+                        pad_x + (p.x - frame.min.x) * scale,
+                        pad_y + (frame.max.y - p.y) * scale,
+                    )
+                })
+                .collect()
+        })
+        .collect();
+    let mut row = vec![0f64; width];
+    for y in 0..height {
+        row.iter_mut().for_each(|cell| *cell = 0.0);
+        for sub in 0..SUB {
+            let sample = y as f64 + (sub as f64 + 0.5) / SUB as f64;
+            for (left, right) in scanline_spans(&polygons, sample) {
+                let left = left.clamp(0.0, width as f64);
+                let right = right.clamp(0.0, width as f64);
+                let mut x = left.floor() as usize;
+                while (x as f64) < right && x < width {
+                    let cover = (right.min(x as f64 + 1.0) - left.max(x as f64)).max(0.0);
+                    row[x] += cover / SUB as f64;
+                    x += 1;
+                }
+            }
+        }
+        for (x, cover) in row.iter().enumerate() {
+            mask[y * width + x] = (cover.clamp(0.0, 1.0) * 255.0).round() as u8;
+        }
+    }
+    mask
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -372,6 +686,7 @@ mod tests {
         OutlinePoint {
             at: Pt::new(x, y),
             on: true,
+            smooth: false,
         }
     }
 
@@ -379,6 +694,7 @@ mod tests {
         OutlinePoint {
             at: Pt::new(x, y),
             on: false,
+            smooth: false,
         }
     }
 
@@ -430,6 +746,7 @@ mod tests {
     fn on_point_wins_over_a_nearer_off_point() {
         let outline = Outline {
             name: "o".into(),
+            unicode: None,
             advance: 100.0,
             contours: vec![OutlineContour {
                 closed: true,
@@ -535,5 +852,101 @@ mod tests {
         let bounds = outline.bounds(-200.0, 800.0);
         assert_eq!(bounds.max, Pt::new(600.0, 800.0));
         assert!(Outline::from_json(&json!({ "name": "H" })).is_none());
+    }
+
+    fn square_outline() -> Outline {
+        Outline {
+            name: "sq".into(),
+            unicode: Some(65),
+            advance: 100.0,
+            contours: vec![OutlineContour {
+                closed: true,
+                points: vec![
+                    on(0.0, 0.0),
+                    on(100.0, 0.0),
+                    on(100.0, 100.0),
+                    on(0.0, 100.0),
+                ],
+            }],
+        }
+    }
+
+    fn near(a: Pt, b: Pt) -> bool {
+        (a.x - b.x).abs() < 1e-9 && (a.y - b.y).abs() < 1e-9
+    }
+
+    #[test]
+    fn effect_matrices() {
+        let p = Pt::new(10.0, 100.0);
+        let slanted = matrix::apply(&matrix::slant(45.0), p);
+        assert!(near(slanted, Pt::new(110.0, 100.0)), "{slanted:?}");
+        let turned = matrix::apply(&matrix::rotate(90.0, Pt::new(0.0, 0.0)), Pt::new(1.0, 0.0));
+        assert!(near(turned, Pt::new(0.0, 1.0)), "{turned:?}");
+        let scaled = matrix::apply(&matrix::scale(2.0, 0.5, Pt::new(50.0, 50.0)), p);
+        assert!(near(scaled, Pt::new(-30.0, 75.0)), "{scaled:?}");
+        let flipped = matrix::apply(&matrix::flip_horizontal(50.0), p);
+        assert!(near(flipped, Pt::new(90.0, 100.0)));
+        let both = matrix::then(&matrix::translate(5.0, 0.0), &matrix::flip_vertical(0.0));
+        assert!(near(matrix::apply(&both, p), Pt::new(15.0, -100.0)));
+    }
+
+    #[test]
+    fn transformed_copy_and_selection() {
+        let outline = square_outline();
+        let only = [Handle {
+            contour: 0,
+            point: 1,
+        }];
+        let moved = outline.transformed(&matrix::translate(5.0, 5.0), Some(&only));
+        assert!(near(moved.contours[0].points[1].at, Pt::new(105.0, 5.0)));
+        assert!(near(moved.contours[0].points[0].at, Pt::new(0.0, 0.0)));
+        let bounds = moved.ink_bounds().unwrap();
+        assert_eq!(bounds.max, Pt::new(105.0, 100.0));
+        assert_eq!(outline.handles().len(), 4);
+    }
+
+    #[test]
+    fn marquee_and_segment_hits() {
+        let outline = square_outline();
+        let view = Viewport {
+            scale: 1.0,
+            origin: Pt::new(0.0, 0.0),
+        };
+        // Screen y is flipped: font (100, 0) is screen (100, 0); font (100, 100) is (100, -100).
+        let picked = handles_in_rect(&outline, &view, Pt::new(50.0, 10.0), Pt::new(150.0, -150.0));
+        assert_eq!(
+            picked,
+            vec![
+                Handle {
+                    contour: 0,
+                    point: 1
+                },
+                Handle {
+                    contour: 0,
+                    point: 2
+                }
+            ]
+        );
+        let hit = nearest_segment(&outline, &view, Pt::new(25.0, 2.0), 5.0).unwrap();
+        assert_eq!((hit.contour, hit.end), (0, 1));
+        assert!((hit.t - 0.25).abs() < 1e-9);
+        // The closing edge runs from point 3 back to point 0.
+        let closing = nearest_segment(&outline, &view, Pt::new(-1.0, -50.0), 5.0).unwrap();
+        assert_eq!(closing.end, 0);
+        assert!(nearest_segment(&outline, &view, Pt::new(50.0, -50.0), 5.0).is_none());
+    }
+
+    #[test]
+    fn rasterizes_with_coverage() {
+        let outline = square_outline();
+        let frame = Bounds {
+            min: Pt::new(0.0, 0.0),
+            max: Pt::new(200.0, 100.0),
+        };
+        let mask = rasterize(&outline, frame, 20, 10);
+        // The square fills the left half; the frame is centered, so columns 0-9 are ink.
+        assert_eq!(mask[5 * 20 + 2], 255);
+        assert_eq!(mask[5 * 20 + 15], 0);
+        assert!(mask.iter().filter(|value| **value == 255).count() >= 90);
     }
 }

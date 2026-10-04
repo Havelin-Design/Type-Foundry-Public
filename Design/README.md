@@ -4,11 +4,22 @@ The editor window is `typefoundry` (crate `App/crates/foundry-app`). It is a cli
 
 ## The window
 
-- **Toolbar** — Open… (a Type Foundry `.json`, a Three.js typeface `.json`, a webfontjson file, or a `.ttf` / `.otf` / `.woff` / `.woff2`), Open UFO… (a `.ufo` folder), Save, Save As…, then the font name and the path it came from. Save writes back to that path. Save As picks `.json` or `.ufo` by the extension you type. A web font that is not `.ttf` has to be saved as `.json`, `.ufo`, or `.ttf`. Dialogs start in the last folder used, which the window remembers between launches. The session does not hold the path.
-- **Glyph list** — the left panel lists glyph names in font order. Click one to draw it.
-- **Canvas** — the selected glyph, fitted to the canvas with the advance box and vertical metrics in view. Scroll or pinch zooms around the pointer. Right- or middle-drag pans. Double-click refits.
-- **Points** — drag a handle to move it. Each drag step sends `move_point` with absolute font coordinates rounded to whole units, then redraws from the session. When an on-curve and an off-curve handle overlap, the on-curve handle is picked.
-- **Status bar** — the last result in SIGNAL, or the error in ALERT, plus the picked point's contour, index, and coordinates.
+The window opens on the **overview**: every glyph as a thumbnail at one shared scale. Double-click a glyph, press Enter, or press Tab to open it in the **editor**. The menus hold everything, and Help > Keyboard shortcuts lists the keys.
+
+- **Menu bar.** File (New font, Open, Open UFO folder, Save, Save As, Quit), Edit (Undo and Redo with step counts, select all, deselect, delete points, smooth or corner, on-curve or off-curve, reverse contour direction), View (overview or editor, zoom, fit, panel and canvas toggles, Settings), Glyph (new, delete, previous, next), Tools (Select, Pen), Effects (Transform, the six effects, round coordinates), and Help.
+- **Toolbar.** Overview and Editor, Select and Pen, Undo and Redo, Effects, then the font name, a dot when there are unsaved changes, and the current glyph.
+- **Overview.** A filter by name or character, a cell-size slider, and New glyph. Thumbnails are drawn once and cached until that glyph changes.
+- **Glyph list.** The left panel, with its own filter. Click to select, double-click to edit.
+- **Editor canvas.** Metric lines with labels, the advance box, black fill (nonzero, so counters stay open), and handles. Scroll or pinch zooms around the pointer, right- or middle-drag pans, and double-click on empty space refits. A panel opening or resizing does not move the glyph under the pointer.
+- **Select tool (V).** Click a point to select it, Shift-click to add or remove, drag empty space to box-select. Drag the selection to move it. Arrows nudge 1 unit, Shift-arrows 10. Delete removes points. Alt-click an outline to add a point there without changing the shape. Double-click an on-curve point to toggle smooth.
+- **Pen tool (P).** Click to start a contour and add on-curve points, Shift-click for off-curve points. Click the first point to close the contour. Esc stops.
+- **Inspector.** Font name, units per em, and the four metrics. The glyph's name, Unicode, and advance, with sidebearings, ink box, and counts shown, plus Reverse, Round, and Delete. For one selected point: X, Y, on-curve or off-curve, and smooth. For several: Smooth, Corner, Delete, and Transform.
+- **Effects (Ctrl+E).** Slant, Scale, Rotate, Move, Flip horizontal, and Flip vertical, applied to the selected points, this glyph, or all glyphs. An AMBER outline previews the result on the canvas before Apply. Apply is one `transform` command, so one undo step even for the whole font.
+- **Preview strip.** Type any text to see it set in the font. Characters the font lacks show as a hollow box. Click a glyph in the strip to select it.
+- **Settings (Ctrl+,).** Fill, stroke, metrics, point numbers, pointer coordinates, snapping moves to whole units, handle size, overview cell size, preview size, and which panels show. Settings and the last folder persist between launches.
+- **Status bar.** The last result in SIGNAL, or the error in ALERT, plus the tool, the selection count, and the zoom.
+
+Every change goes through a session command (`move_points`, `split_segment`, `add_contour`, `transform`, `set_metrics`, and the rest in `documents/api.md`), so undo covers all of it. The same commands are open to plugins and the CLI. The window never writes font fields itself. On-curve corner points draw as diamonds and smooth points as circles. A ring marks each contour's first point.
 
 A path given on the command line opens on launch: `typefoundry C:/fonts/Wide.ufo`.
 

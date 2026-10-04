@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use foundry_core::{
-    Contour, Font, FoundryError, Glyph, Matrix, MetricsUpdate, PointKind, blend_fonts,
+    Anchor, Contour, Font, FoundryError, Glyph, Matrix, MetricsUpdate, PointKind, blend_fonts,
     compatibility,
 };
 use serde::{Deserialize, Serialize};
@@ -124,6 +124,8 @@ pub enum Command {
         matrix: Matrix,
         #[serde(default)]
         advance: bool,
+        #[serde(default)]
+        anchor: Anchor,
     },
     RoundCoordinates {
         #[serde(default)]
@@ -525,11 +527,17 @@ impl Session {
                 points,
                 matrix,
                 advance,
+                anchor,
             } => {
                 let font = self.font.as_mut().ok_or(FoundryError::NoFont)?;
                 let selection = points.as_deref().map(refs);
-                let changed =
-                    font.transform(names.as_deref(), selection.as_deref(), matrix, advance)?;
+                let changed = font.transform_anchored(
+                    names.as_deref(),
+                    selection.as_deref(),
+                    matrix,
+                    advance,
+                    anchor,
+                )?;
                 Ok(Some(json!({ "glyphs": changed })))
             }
             Command::RoundCoordinates { names } => {
@@ -936,6 +944,7 @@ mod tests {
             r#"{"op":"reverse_contour","name":"H","contour":0}"#,
             r#"{"op":"delete_points","name":"H","points":[[1,0]]}"#,
             r#"{"op":"transform","names":["H"],"matrix":[1,0,0.2,1,0,0]}"#,
+            r#"{"op":"transform","matrix":[-1,0,0,1,0,0],"anchor":"advance"}"#,
             r#"{"op":"round_coordinates"}"#,
             r#"{"op":"set_metrics","x_height":510}"#,
             r#"{"op":"rename_glyph","name":"H","new_name":"Eta"}"#,
