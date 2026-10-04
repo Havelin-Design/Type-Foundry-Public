@@ -16,6 +16,7 @@ pub enum FoundryError {
     NoFont,
     Ufo(String),
     Ttf(String),
+    Import(String),
     Io(String),
     Json(String),
 }
@@ -41,6 +42,7 @@ impl fmt::Display for FoundryError {
             Self::NoFont => write!(f, "no font is open"),
             Self::Ufo(message) => write!(f, "{message}"),
             Self::Ttf(message) => write!(f, "{message}"),
+            Self::Import(message) => write!(f, "{message}"),
             Self::Io(message) => write!(f, "{message}"),
             Self::Json(message) => write!(f, "{message}"),
         }

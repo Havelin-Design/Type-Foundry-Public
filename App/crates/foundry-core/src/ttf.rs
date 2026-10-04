@@ -60,7 +60,7 @@ pub(crate) fn write_ttf(font: &Font) -> Result<Vec<u8>, FoundryError> {
     tables.insert(*b"maxp", maxp_table(&glyphs));
     tables.insert(*b"name", name_table(&font.name));
     tables.insert(*b"OS/2", os2_table(font, &glyphs, &codes, bounds));
-    tables.insert(*b"post", post_table());
+    tables.insert(*b"post", post_table(&glyphs));
 
     assemble(tables)
 }
@@ -656,9 +656,16 @@ fn os2_table(font: &Font, glyphs: &[BuiltGlyph], codes: &[(u32, u16)], bounds: B
     bytes
 }
 
-fn post_table() -> Vec<u8> {
+/// Format 2 carries glyph names, so a saved `.ttf` opens with the same names. When a name
+/// cannot be stored (non-ASCII or longer than 63 bytes), format 3 is written with no names.
+fn post_table(glyphs: &[BuiltGlyph]) -> Vec<u8> {
+    let storable = glyphs.iter().all(|glyph| {
+        !glyph.name.is_empty()
+            && glyph.name.len() <= 63
+            && glyph.name.bytes().all(|byte| byte.is_ascii_graphic())
+    });
     let mut bytes = Vec::new();
-    push_u32(&mut bytes, 0x0003_0000);
+    push_u32(&mut bytes, if storable { 0x0002_0000 } else { 0x0003_0000 });
     push_u32(&mut bytes, 0);
     push_i16(&mut bytes, -100);
     push_i16(&mut bytes, 50);
@@ -667,6 +674,24 @@ fn post_table() -> Vec<u8> {
     push_u32(&mut bytes, 0);
     push_u32(&mut bytes, 0);
     push_u32(&mut bytes, 0);
+    if storable {
+        // Index 0 is the standard `.notdef`. Every other name is a custom string, which starts
+        // at index 258, after the standard Macintosh names.
+        push_u16(&mut bytes, u16::try_from(glyphs.len()).unwrap_or(u16::MAX));
+        let mut strings = Vec::new();
+        let mut next = 258u16;
+        for glyph in glyphs {
+            if glyph.name == ".notdef" {
+                push_u16(&mut bytes, 0);
+                continue;
+            }
+            push_u16(&mut bytes, next);
+            next = next.saturating_add(1);
+            strings.push(u8::try_from(glyph.name.len()).unwrap_or(63));
+            strings.extend_from_slice(glyph.name.as_bytes());
+        }
+        bytes.extend_from_slice(&strings);
+    }
     bytes
 }
 

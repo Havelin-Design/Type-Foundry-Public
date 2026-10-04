@@ -59,6 +59,13 @@ Frozen for now:
 
 ## Session log
 
+### 2026-10-04 — Binary font import (cloud)
+
+- Focus: open more formats through the same `Font::load`. Branch `claude/font-import`.
+- Shipped `.ttf`, `.otf` (CFF or CFF2), and face 0 of `.ttc` / `.otc` through `open`, `check`, and `blend`, read with `ttf-parser` (now a normal dependency). Composites are decomposed. Implied on-curve points become real. Variable fonts give their default instance. WOFF and WOFF2 are refused by name. Saving to a binary extension other than `.ttf` is refused. TrueType export now writes `post` format 2, so names survive a round trip.
+- Validation: fmt, `cargo test --workspace` (34 tests), and clippy `-D warnings` passed in the Linux container. Tests build their own fonts, including a hand-assembled CFF font. No third-party font is committed. A smoke read 58 local fonts with no failures, including a 45,000-glyph CJK `.ttc` in about 0.34 s.
+- Next: see `documents/font-formats.md`. WOFF 1 and choosing a collection face are the cheap steps. Reading variable-font instances as blend masters is the valuable one.
+
 ### 2026-10-04 — Windows check of the merged window and MCP
 
 - Focus: PR #1 is on `main`. Confirm the cloud slice on this PC.

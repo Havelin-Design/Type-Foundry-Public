@@ -3,6 +3,7 @@
 mod blend;
 mod error;
 mod font;
+mod sfnt;
 mod ttf;
 mod ufo;
 

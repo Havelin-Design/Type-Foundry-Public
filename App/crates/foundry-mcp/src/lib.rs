@@ -215,7 +215,7 @@ fn response_result(response: &Response) -> Value {
 fn tool_list() -> Value {
     let path = json!({
         "type": "string",
-        "description": "A .ufo directory or a typefoundry.font .json file. Use forward slashes."
+        "description": "A typefoundry.font .json file, a .ufo directory, or a .ttf, .otf, .ttc, or .otc font. Saving writes .json, .ufo, or .ttf. Use forward slashes."
     });
     let name = json!({ "type": "string", "description": "Glyph name." });
     let none = json!({ "type": "object", "properties": {} });
@@ -234,7 +234,7 @@ fn tool_list() -> Value {
         },
         {
             "name": "font_open",
-            "description": "Open a .ufo directory or a .json font from local disk.",
+            "description": "Open a .json font, a .ufo directory, or a .ttf, .otf, .ttc, or .otc font from local disk.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "path": path },
