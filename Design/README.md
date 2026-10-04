@@ -4,7 +4,7 @@ The editor window is `typefoundry` (crate `App/crates/foundry-app`). It is a cli
 
 ## The window
 
-- **Toolbar** — Open… (a `.json` font), Open UFO… (a `.ufo` folder), Save, Save As…, then the font name and the path it came from. Save writes back to that path. Save As picks `.json` or `.ufo` by the extension you type. Dialogs start in the last folder used, which the window remembers between launches. The session does not hold the path.
+- **Toolbar** — Open… (a Type Foundry `.json`, a Three.js typeface `.json`, a webfontjson file, or a `.ttf` / `.otf` / `.woff` / `.woff2`), Open UFO… (a `.ufo` folder), Save, Save As…, then the font name and the path it came from. Save writes back to that path. Save As picks `.json` or `.ufo` by the extension you type. A web font that is not `.ttf` has to be saved as `.json`, `.ufo`, or `.ttf`. Dialogs start in the last folder used, which the window remembers between launches. The session does not hold the path.
 - **Glyph list** — the left panel lists glyph names in font order. Click one to draw it.
 - **Canvas** — the selected glyph, fitted to the canvas with the advance box and vertical metrics in view. Scroll or pinch zooms around the pointer. Right- or middle-drag pans. Double-click refits.
 - **Points** — drag a handle to move it. Each drag step sends `move_point` with absolute font coordinates rounded to whole units, then redraws from the session. When an on-curve and an off-curve handle overlap, the on-curve handle is picked.

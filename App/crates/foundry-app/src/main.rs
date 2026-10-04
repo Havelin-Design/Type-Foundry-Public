@@ -134,7 +134,7 @@ impl FoundryWindow {
             dragging: None,
             picked: None,
             status: (
-                "Open a .json font or a .ufo folder.".to_string(),
+                "Open a JSON font, a UFO, or a web font.".to_string(),
                 Tone::Quiet,
             ),
         }
@@ -250,7 +250,9 @@ impl FoundryWindow {
     fn open_json_dialog(&mut self) {
         if let Some(path) = self
             .dialog()
-            .add_filter("Type Foundry font", &["json"])
+            .add_filter("Type Foundry or typeface JSON", &["json"])
+            .add_filter("Web font JSON", &["json", "js"])
+            .add_filter("Web font", &["ttf", "otf", "woff", "woff2"])
             .pick_file()
         {
             self.open(path);

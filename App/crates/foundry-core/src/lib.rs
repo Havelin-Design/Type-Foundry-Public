@@ -3,8 +3,11 @@
 mod blend;
 mod error;
 mod font;
+mod import;
 mod ttf;
+mod typeface;
 mod ufo;
+mod webfont;
 
 pub use blend::{CompatIssue, blend_fonts, compatibility};
 pub use error::FoundryError;

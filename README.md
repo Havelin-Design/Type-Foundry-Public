@@ -23,11 +23,13 @@ A `save` command whose path ends in `.ttf` writes an installable TrueType file f
 
 `foundry run` reads one JSON command per line. That stream is the plugin and AI surface. See `documents/api.md`.
 
-`typefoundry` is the drawing window. Open a JSON font or a UFO, pick a glyph, and drag points. Each drag is a `move_point` command on the same session. See `Design/README.md`.
+`typefoundry` is the drawing window. Open a JSON font, a UFO, a typeface JSON, or a web font, pick a glyph, and drag points. Each drag is a `move_point` command on the same session. See `Design/README.md`.
+
+`Fonts/Roboto-English.json` and `Fonts/Roboto-Cyrillic.json` are Roboto Regular cut to English (U+0020–U+007E) and Cyrillic (U+0400–U+04FF). The license is in `Fonts/NOTICE.md`.
 
 `foundry-mcp`, or `foundry mcp`, is a stdio MCP server, so a chat client can open, inspect, move points, check, blend, and save. It works only on local files and uploads nothing.
 
-Blend is linear interpolation. Both fonts need the same glyph names, contour counts, point counts, and point types. That is the same rule variable-font masters use. Two unrelated typefaces will be refused until a later matching step exists. `open`, `save`, `check`, and `blend` accept a `.ufo` directory as well as the JSON working file. `save` also writes `.ttf`.
+Blend is linear interpolation. Both fonts need the same glyph names, contour counts, point counts, and point types. That is the same rule variable-font masters use. Two unrelated typefaces will be refused until a later matching step exists. `open`, `save`, `check`, and `blend` accept a `.ufo` directory as well as the JSON working file. `open` also reads typeface JSON and web fonts (`.ttf`, `.otf`, `.woff`, `.woff2`, and webfontjson). `save` also writes `.ttf`.
 
 ## Layout
 

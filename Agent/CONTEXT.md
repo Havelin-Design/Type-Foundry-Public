@@ -10,6 +10,7 @@ A local professional type kit. Design a font, blend two compatible faces into a 
 - `documents/api.md` — the command contract.
 - `documents/shift-reference.md` — what we take from Shift, and what we do not copy.
 - `documents/Keys/` — credentials, gitignored. None yet.
+- `Fonts/` — Roboto English and Roboto Cyrillic, as Type Foundry JSON. See `Fonts/NOTICE.md`.
 
 ## Collaboration
 
@@ -32,7 +33,7 @@ PM notes live here. Product code lives in `App/`. Plugins, the CLI, and agents s
 
 ## How a font is stored
 
-The working file is JSON, `format` `typefoundry.font`, `version` 1. A glyph is contours of `on` and `off` points, an advance, and an optional unicode. `open`, `save`, `check`, and `blend` also read and write a `.ufo` directory through the same commands. UFO import keeps the default layer, sorts glyph names, and keeps the first Unicode value. Anchors, guidelines, kerning, groups, and lib data are ignored. Components, images, and implied-on qcurves are refused. `save` to a `.ttf` path writes an installable TrueType file: cubics become quadratics, open contours are closed with a straight edge, and Unicode outside the Basic Multilingual Plane is refused.
+The working file is JSON, `format` `typefoundry.font`, `version` 1. A glyph is contours of `on` and `off` points, an advance, and an optional unicode. `open`, `save`, `check`, and `blend` also read and write a `.ufo` directory through the same commands. `open` also reads a Three.js typeface JSON file, a webfontjson file, and `.ttf`, `.otf`, `.woff`, and `.woff2`. Embedded OpenType is refused. Saving over `.otf`, `.woff`, or `.woff2` is refused. UFO import keeps the default layer, sorts glyph names, and keeps the first Unicode value. Anchors, guidelines, kerning, groups, and lib data are ignored. Components, images, and implied-on qcurves are refused. `save` to a `.ttf` path writes an installable TrueType file: cubics become quadratics, open contours are closed with a straight edge, and Unicode outside the Basic Multilingual Plane is refused.
 
 ## How blend works
 
@@ -58,6 +59,15 @@ Frozen for now:
 - Cargo target directory stays on `C:`.
 
 ## Session log
+
+### 2026-10-04 — Roboto English, Roboto Cyrillic, and web font import
+
+- Focus: bring in the two sample faces Troy asked for, and open the JSON font formats those repos use.
+- Shipped `Fonts/Roboto-English.json` (U+0020–U+007E, 95 glyphs) and `Fonts/Roboto-Cyrillic.json` (U+0400–U+04FF, 255 glyphs). Both are Roboto Regular read from https://github.com/7dir/json-fonts `fonts/cyrillic/roboto/Roboto_Regular.json`. That repo has no separate English file. The other scripts in the source file were left out. License: `Fonts/NOTICE.md` and `Fonts/LICENSE-APACHE.txt`.
+- `open` now reads typeface JSON (`m` `l` `q` `b` `z`), webfontjson (`css` with a base64 `@font-face`, including the `callback({...})` wrapper), and `.ttf`, `.otf`, `.woff`, `.woff2`. A multi-face web font imports the regular face. `.eot` is refused. Save will not overwrite `.otf`, `.woff`, or `.woff2`.
+- The Myriad Pro files in https://github.com/ahume/webfontjson were not copied. That repo is the JSON wrapper, not a font library.
+- Validation: `powershell -ExecutionPolicy Bypass -File App/scripts/check.ps1` passed. 34 tests, plus one ignored regen test, clippy clean. The Roboto files load as 95 English glyphs and 255 Cyrillic glyphs. The Open dialog filters were not clicked.
+- Next: TrueType in the window Save As dialog, then pen and select tools. Generation stays frozen.
 
 ### 2026-10-04 — Windows check of the merged window and MCP
 
