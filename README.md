@@ -14,9 +14,15 @@ foundry blend Narrow.ufo Wide.ufo --t 0.5 --out Mid.ufo
 foundry run --file commands.jsonl
 ```
 
+A `save` command whose path ends in `.ttf` writes an installable TrueType file from the open font.
+
+```json
+{"op":"save","path":"Mid.ttf"}
+```
+
 `foundry run` reads one JSON command per line. That stream is the plugin and AI surface. See `documents/api.md`.
 
-Blend is linear interpolation. Both fonts need the same glyph names, contour counts, point counts, and point types. That is the same rule variable-font masters use. Two unrelated typefaces will be refused until a later matching step exists. `open`, `save`, `check`, and `blend` accept a `.ufo` directory as well as the JSON working file.
+Blend is linear interpolation. Both fonts need the same glyph names, contour counts, point counts, and point types. That is the same rule variable-font masters use. Two unrelated typefaces will be refused until a later matching step exists. `open`, `save`, `check`, and `blend` accept a `.ufo` directory as well as the JSON working file. `save` also writes `.ttf`.
 
 ## Layout
 

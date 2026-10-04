@@ -25,11 +25,12 @@ foundry run --file commands.jsonl
 {"op":"create","name":"Wide","upm":1000}
 ```
 
-`open` and `save` read and write a project JSON file or a `.ufo` directory. The same commands `check` and `blend` two files of either kind. JSON stays the working document. A UFO import keeps the default layer, sorts glyph names, and keeps the first Unicode value. It ignores anchors, guidelines, kerning, groups, and lib data. It refuses a glyph that has components or an image, and it refuses a qcurve that is not exactly one off-curve point. One off-curve point is a quadratic. Two are a cubic. On the way out, the UFO family name is the font name.
+`open` and `save` read and write a project JSON file or a `.ufo` directory. `save` also writes an installable `.ttf` when the path ends in `.ttf`. `check` and `blend` compare or blend JSON and UFO. JSON stays the working document. A UFO import keeps the default layer, sorts glyph names, and keeps the first Unicode value. It ignores anchors, guidelines, kerning, groups, and lib data. It refuses a glyph that has components or an image, and it refuses a qcurve that is not exactly one off-curve point. One off-curve point is a quadratic. Two are a cubic. On the way out, the UFO family name is the font name. TrueType export turns cubics into quadratics, closes an open contour with a straight edge, and refuses a Unicode value outside the Basic Multilingual Plane.
 
 ```json
 {"op":"open","path":"wide.json"}
 {"op":"save","path":"wide.ufo"}
+{"op":"save","path":"wide.ttf"}
 ```
 
 `info` describes the open font. `glyphs` lists names. `glyph` returns one glyph.

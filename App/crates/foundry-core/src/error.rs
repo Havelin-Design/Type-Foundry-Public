@@ -15,6 +15,7 @@ pub enum FoundryError {
     MissingPoint,
     NoFont,
     Ufo(String),
+    Ttf(String),
     Io(String),
     Json(String),
 }
@@ -39,6 +40,7 @@ impl fmt::Display for FoundryError {
             Self::MissingPoint => write!(f, "that point is not in the glyph"),
             Self::NoFont => write!(f, "no font is open"),
             Self::Ufo(message) => write!(f, "{message}"),
+            Self::Ttf(message) => write!(f, "{message}"),
             Self::Io(message) => write!(f, "{message}"),
             Self::Json(message) => write!(f, "{message}"),
         }

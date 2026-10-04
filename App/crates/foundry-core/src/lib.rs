@@ -3,6 +3,7 @@
 mod blend;
 mod error;
 mod font;
+mod ttf;
 mod ufo;
 
 pub use blend::{CompatIssue, blend_fonts, compatibility};

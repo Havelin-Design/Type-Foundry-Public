@@ -139,6 +139,9 @@ impl Font {
         if crate::ufo::is_ufo_path(path) {
             return crate::ufo::save_ufo(self, path);
         }
+        if crate::ttf::is_ttf_path(path) {
+            return crate::ttf::save_ttf(self, path);
+        }
         if let Some(parent) = path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
