@@ -134,18 +134,20 @@ fn parse_outline(glyph: &str, text: &str) -> Result<Vec<Contour>, FoundryError> 
                 let (x, y) = take_pair(glyph, &tokens, &mut index)?;
                 current.push(on(x, y));
             }
+            // typeface.js writes the end point first, then the control points:
+            // `q x y cx cy` and `b x y c1x c1y c2x c2y`.
             "q" => {
                 require_move(glyph, started)?;
-                let (cx, cy) = take_pair(glyph, &tokens, &mut index)?;
                 let (x, y) = take_pair(glyph, &tokens, &mut index)?;
+                let (cx, cy) = take_pair(glyph, &tokens, &mut index)?;
                 current.push(off(cx, cy));
                 current.push(on(x, y));
             }
             "b" => {
                 require_move(glyph, started)?;
+                let (x, y) = take_pair(glyph, &tokens, &mut index)?;
                 let (c1x, c1y) = take_pair(glyph, &tokens, &mut index)?;
                 let (c2x, c2y) = take_pair(glyph, &tokens, &mut index)?;
-                let (x, y) = take_pair(glyph, &tokens, &mut index)?;
                 current.push(off(c1x, c1y));
                 current.push(off(c2x, c2y));
                 current.push(on(x, y));
@@ -284,8 +286,8 @@ mod tests {
             "descender": -200,
             "glyphs": {
                 "A": {"ha": 500, "o": "m 10 0 l 90 0 l 90 80 l 10 80 z"},
-                "B": {"ha": 400, "o": "m 0 0 q 50 100 100 0 z"},
-                "C": {"ha": 300, "o": "m 0 0 b 0 80 80 80 80 0 z"}
+                "B": {"ha": 400, "o": "m 0 0 q 100 0 50 100 z"},
+                "C": {"ha": 300, "o": "m 0 0 b 80 0 0 80 80 80 z"}
             }
         }"#;
         let font = load_text(text).unwrap();
@@ -300,8 +302,24 @@ mod tests {
         assert_eq!(a.contours[0].points[0].x, 10.0);
         let b = font.glyph("B").unwrap();
         assert_eq!(b.contours[0].points[1].kind, PointKind::Off);
-        assert_eq!(b.contours[0].points[1].y, 100.0);
+        assert_eq!(
+            (b.contours[0].points[1].x, b.contours[0].points[1].y),
+            (50.0, 100.0),
+            "the control point is the second pair"
+        );
+        assert_eq!(
+            b.contours[0].points[2].x, 100.0,
+            "the end point is the first pair"
+        );
         let c = font.glyph("C").unwrap();
+        assert_eq!(
+            c.contours[0].points[1].y, 80.0,
+            "first control is the second pair"
+        );
+        assert_eq!(
+            c.contours[0].points[3].x, 80.0,
+            "the end point is the first pair"
+        );
         assert_eq!(
             c.contours[0]
                 .points

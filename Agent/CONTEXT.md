@@ -60,6 +60,15 @@ Frozen for now:
 
 ## Session log
 
+### 2026-10-04 — Editor UI (cloud)
+
+- Focus: turn the bare window into an editor. Branch `claude/editor-ui`.
+- Engine: 20 new session commands (point, contour, glyph, and font edits, `transform` with a per-glyph `anchor`, `round_coordinates`, `index`, `undo`, `redo`, `checkpoint`, `history`). Edits check their input before changing anything. Undo keeps 200 steps, and drags coalesce into one step.
+- Window: a menu bar, toolbar, overview grid of cached thumbnails, select and pen tools, box selection, Alt-click to split a segment, an inspector, an Effects dialog with a live preview, a text preview strip, a settings window, and keyboard shortcuts. Split into `app`, `canvas`, `grid`, `panels`, `effects`, and `settings` modules.
+- Fixed on the way: the typeface.js importer read `q` and `b` control points before the end point, which scrambled every curve. The two `Fonts/Roboto-*.json` subsets were regenerated from the json-fonts source.
+- Validation: fmt, `cargo test --workspace`, and clippy `-D warnings` passed in the Linux container. Smoke under Xvfb on Roboto English: overview, editor, box select plus nudge (one undo step), undo, a 12-degree slant on all 95 glyphs from Effects, a new glyph drawn with the pen and closed, a point added by Alt-click and dragged, smooth toggled, and the result saved.
+- Next: the MCP server still lists its original 9 tools. Add the new edit commands there. Then component support, kerning, and a Bold effect (path offsetting).
+
 ### 2026-10-04 — WOFF 1, after the binary-import merge
 
 - Focus: PR #2 is on main. Confirm it on this PC, then take the first next step in `documents/font-formats.md`.
