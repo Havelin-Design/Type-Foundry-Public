@@ -109,7 +109,7 @@ Stdout carries only protocol messages, one JSON-RPC object per line. Logs go to 
 
 A tool result is `{"content":[{"type":"text","text":"..."}],"isError":false}`. The text is the command response JSON. `isError` is true when the command response has `ok: false`, or when the arguments do not fit the tool.
 
-`font_save` without a `path` saves to the last path this server process opened, saved, or blended to. `font_create` clears that path, so a new font needs one explicit `path` the first time. The path lives in the MCP wrapper, not in the session.
+`font_save` takes the same paths as `save`, including `.ttf`. Without a `path` it saves to the last path this server process opened, saved, or blended to. `font_create` clears that path, so a new font needs one explicit `path` the first time. The path lives in the MCP wrapper, not in the session.
 
 Claude Desktop (`claude_desktop_config.json`) or Cursor (`.cursor/mcp.json`):
 
