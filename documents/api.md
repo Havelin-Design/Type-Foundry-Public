@@ -25,11 +25,11 @@ foundry run --file commands.jsonl
 {"op":"create","name":"Wide","upm":1000}
 ```
 
-`open` and `save` read and write the project JSON.
+`open` and `save` read and write a project JSON file or a `.ufo` directory. The same commands `check` and `blend` two files of either kind. JSON stays the working document. A UFO import keeps the default layer, sorts glyph names, and keeps the first Unicode value. It ignores anchors, guidelines, kerning, groups, and lib data. It refuses a glyph that has components or an image, and it refuses a qcurve that is not exactly one off-curve point. One off-curve point is a quadratic. Two are a cubic. On the way out, the UFO family name is the font name.
 
 ```json
 {"op":"open","path":"wide.json"}
-{"op":"save","path":"wide.json"}
+{"op":"save","path":"wide.ufo"}
 ```
 
 `info` describes the open font. `glyphs` lists names. `glyph` returns one glyph.
@@ -50,6 +50,12 @@ foundry run --file commands.jsonl
 
 ```json
 {"op":"set_advance","name":"H","advance":680}
+```
+
+`move_point` sets one point to an absolute coordinate. `contour` and `point` are zero-based indexes.
+
+```json
+{"op":"move_point","name":"H","contour":0,"point":0,"x":110,"y":20}
 ```
 
 `check` compares two files. `blend` writes a new file and opens it in the session. `t` defaults to 0.5. `t` is 0 at the first font and 1 at the second. Values outside that range extrapolate.

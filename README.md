@@ -10,12 +10,13 @@ This is not a fork of [Shift](https://github.com/shift-editor/shift). Shift is t
 foundry new --name "Wide" --upm 1000 --out wide.json
 foundry check narrow.json wide.json
 foundry blend narrow.json wide.json --t 0.5 --out mid.json
+foundry blend Narrow.ufo Wide.ufo --t 0.5 --out Mid.ufo
 foundry run --file commands.jsonl
 ```
 
 `foundry run` reads one JSON command per line. That stream is the plugin and AI surface. See `documents/api.md`.
 
-Blend is linear interpolation. Both fonts need the same glyph names, contour counts, point counts, and point types. That is the same rule variable-font masters use. Two unrelated typefaces will be refused until a later matching step exists.
+Blend is linear interpolation. Both fonts need the same glyph names, contour counts, point counts, and point types. That is the same rule variable-font masters use. Two unrelated typefaces will be refused until a later matching step exists. `open`, `save`, `check`, and `blend` accept a `.ufo` directory as well as the JSON working file.
 
 ## Layout
 

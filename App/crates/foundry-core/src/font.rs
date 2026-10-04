@@ -127,12 +127,18 @@ impl Font {
     }
 
     pub fn load(path: &Path) -> Result<Self, FoundryError> {
+        if crate::ufo::is_ufo_path(path) {
+            return crate::ufo::load_ufo(path);
+        }
         let text = fs::read_to_string(path).map_err(|err| FoundryError::Io(err.to_string()))?;
         Self::from_json(&text)
     }
 
     pub fn save(&self, path: &Path) -> Result<(), FoundryError> {
         self.validate()?;
+        if crate::ufo::is_ufo_path(path) {
+            return crate::ufo::save_ufo(self, path);
+        }
         if let Some(parent) = path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
@@ -140,6 +146,31 @@ impl Font {
             fs::create_dir_all(parent).map_err(|err| FoundryError::Io(err.to_string()))?;
         }
         fs::write(path, self.to_json()?).map_err(|err| FoundryError::Io(err.to_string()))
+    }
+
+    pub fn move_point(
+        &mut self,
+        name: &str,
+        contour: usize,
+        index: usize,
+        x: f64,
+        y: f64,
+    ) -> Result<(), FoundryError> {
+        if !x.is_finite() || !y.is_finite() {
+            return Err(FoundryError::NonFinite);
+        }
+        let Some(glyph) = self.glyph_mut(name) else {
+            return Err(FoundryError::MissingGlyph(name.to_string()));
+        };
+        let Some(contour) = glyph.contours.get_mut(contour) else {
+            return Err(FoundryError::MissingPoint);
+        };
+        let Some(point) = contour.points.get_mut(index) else {
+            return Err(FoundryError::MissingPoint);
+        };
+        point.x = x;
+        point.y = y;
+        Ok(())
     }
 
     fn validate(&self) -> Result<(), FoundryError> {

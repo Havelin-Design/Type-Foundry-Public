@@ -64,6 +64,8 @@ Parallel agents add only their own workspace member. Binary names are fixed: CLI
 
 **Goal:** `foundry open`, `save`, `check`, and `blend` accept a `.ufo` directory the same way they accept JSON. A session can move one point. No second mutation API.
 
+If `Font::load` already opens a `.ufo` directory, `Command::MovePoint` exists, and the UFO tests pass, this block is already on `main`. Do not rewrite it. Run the checkpoint and go on.
+
 **Build:**
 1. Add `App/crates/foundry-core/src/ufo.rs` with `is_ufo_path`, `load_ufo`, `save_ufo`. A path is UFO when its extension is `ufo` (this works for a directory).
 2. `Font::load` / `Font::save` dispatch on that check. JSON behavior stays. `save` still calls `validate` first.

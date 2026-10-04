@@ -32,6 +32,13 @@ pub enum Command {
         name: String,
         advance: f64,
     },
+    MovePoint {
+        name: String,
+        contour: usize,
+        point: usize,
+        x: f64,
+        y: f64,
+    },
     Check {
         a: String,
         b: String,
@@ -185,6 +192,23 @@ impl Session {
                     .ok_or_else(|| FoundryError::MissingGlyph(name.clone()))?;
                 glyph.advance = advance;
                 Ok(Some(json!({ "name": name, "advance": advance })))
+            }
+            Command::MovePoint {
+                name,
+                contour,
+                point,
+                x,
+                y,
+            } => {
+                let font = self.font.as_mut().ok_or(FoundryError::NoFont)?;
+                font.move_point(&name, contour, point, x, y)?;
+                Ok(Some(json!({
+                    "name": name,
+                    "contour": contour,
+                    "point": point,
+                    "x": x,
+                    "y": y,
+                })))
             }
             Command::Check { a, b } => compare_files(&a, &b),
             Command::Blend { a, b, t, out } => {
@@ -365,6 +389,49 @@ mod tests {
         assert_eq!(opened.glyph("H").unwrap().contours[0].points[0].x, 90.0);
         assert_eq!(session.font().unwrap().name, opened.name);
 
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn moves_a_point_in_an_open_ufo_and_saves_json() {
+        let dir = temp_dir();
+        let ufo_path = dir.join("wide.ufo");
+        let json_path = dir.join("wide.json");
+        let mut session = Session::new();
+        assert!(
+            session
+                .execute(Command::Create {
+                    name: "Wide".into(),
+                    upm: 1000,
+                })
+                .ok
+        );
+        assert!(
+            session
+                .execute(Command::PutGlyph {
+                    glyph: square("H", 40.0, 400.0),
+                })
+                .ok
+        );
+        let saved = session.execute(Command::Save {
+            path: ufo_path.to_string_lossy().into_owned(),
+        });
+        assert!(saved.ok, "{saved:?}");
+        let moved = session.execute(Command::MovePoint {
+            name: "H".into(),
+            contour: 0,
+            point: 0,
+            x: 55.0,
+            y: 5.0,
+        });
+        assert!(moved.ok, "{moved:?}");
+        let saved_json = session.execute(Command::Save {
+            path: json_path.to_string_lossy().into_owned(),
+        });
+        assert!(saved_json.ok, "{saved_json:?}");
+        let opened = Font::load(&json_path).unwrap();
+        assert_eq!(opened.glyph("H").unwrap().contours[0].points[0].x, 55.0);
+        assert_eq!(opened.glyph("H").unwrap().contours[0].points[0].y, 5.0);
         let _ = fs::remove_dir_all(dir);
     }
 

@@ -12,7 +12,9 @@ pub enum FoundryError {
     EmptyContour(String),
     NonFinite,
     MissingGlyph(String),
+    MissingPoint,
     NoFont,
+    Ufo(String),
     Io(String),
     Json(String),
 }
@@ -34,7 +36,9 @@ impl fmt::Display for FoundryError {
             Self::EmptyContour(name) => write!(f, "glyph {name} has a contour with no points"),
             Self::NonFinite => write!(f, "a coordinate or advance is not a finite number"),
             Self::MissingGlyph(name) => write!(f, "glyph {name} is not in the open font"),
+            Self::MissingPoint => write!(f, "that point is not in the glyph"),
             Self::NoFont => write!(f, "no font is open"),
+            Self::Ufo(message) => write!(f, "{message}"),
             Self::Io(message) => write!(f, "{message}"),
             Self::Json(message) => write!(f, "{message}"),
         }

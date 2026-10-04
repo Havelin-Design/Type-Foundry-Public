@@ -32,7 +32,7 @@ PM notes live here. Product code lives in `App/`. Plugins, the CLI, and agents s
 
 ## How a font is stored
 
-The working file is JSON, `format` `typefoundry.font`, `version` 1. A glyph is contours of `on` and `off` points, an advance, and an optional unicode. UFO and TTF/OTF come later as import and export. They are not the working copy.
+The working file is JSON, `format` `typefoundry.font`, `version` 1. A glyph is contours of `on` and `off` points, an advance, and an optional unicode. `open`, `save`, `check`, and `blend` also read and write a `.ufo` directory through the same commands. UFO import keeps the default layer, sorts glyph names, and keeps the first Unicode value. Anchors, guidelines, kerning, groups, and lib data are ignored. Components, images, and implied-on qcurves are refused. TTF/OTF export is still later.
 
 ## How blend works
 
@@ -46,7 +46,7 @@ Frozen for now:
 
 - No account, sync, store, or upload.
 - No fork of Shift and no dependency on Shift crates. Shift is the architecture reference. Its public app already draws, interpolates masters, and exports variable TrueType. Scripting and an AI API are still on its future list. That gap is ours.
-- No second document format beside `typefoundry.font` until UFO import/export is an explicit build day.
+- JSON `typefoundry.font` stays the working document. UFO is an exchange path on the same load and save calls, not a second editor model.
 - Generation calls a provider through `put_glyph`. It does not live inside the geometry crate. In-app model calls use SpaceXAI when that day comes.
 
 ## Decisions
@@ -65,3 +65,10 @@ Frozen for now:
 - Shipped the workspace, the `typefoundry.font` document, compatible-outline blending, and the `foundry` command stream (`new`, `info`, `check`, `blend`, `run`).
 - Validation: `cargo test --workspace` 7/7 passed. `cargo clippy --workspace --all-targets -- -D warnings` passed. `cargo fmt --all -- --check` passed. CLI smoke blended Narrow advance 400 and Wide advance 800 into `H` advance 600 and wrote `Narrow / Wide @ 0.5`.
 - Next: Troy picks the first product slice. Recommendation is UFO open, blend, and UFO save, so the blend runs on real source files.
+
+### 2026-10-04 — UFO exchange
+
+- Focus: finish the local UFO stub and keep every branch on `main`.
+- Shipped UFO open, blend, and save on the existing commands, plus `move_point`. Components, images, and implied-on qcurves are refused. Tests use synthetic norad fonts.
+- Validation: `powershell -ExecutionPolicy Bypass -File App/scripts/check.ps1` from the repo root.
+- Next: the drawing window and the MCP server, in `documents/day-2-agent-prompt.md`. Generation stays frozen.
