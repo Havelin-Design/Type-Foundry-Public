@@ -1,0 +1,21 @@
+[package]
+name = "foundry-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Drawing window for the type foundry"
+
+[[bin]]
+name = "typefoundry"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "persistence"] }
+foundry-api.workspace = true
+rfd = "0.15"
+serde_json.workspace = true
+
+# winit needs a display backend on Linux. Windows and macOS need nothing extra.
+[target.'cfg(target_os = "linux")'.dependencies]
+eframe = { version = "0.36", default-features = false, features = ["x11", "wayland"] }

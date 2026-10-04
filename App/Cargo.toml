@@ -5,6 +5,7 @@ members = [
     "crates/foundry-api",
     "crates/foundry-cli",
     "crates/foundry-mcp",
+    "crates/foundry-app",
 ]
 
 [workspace.package]
