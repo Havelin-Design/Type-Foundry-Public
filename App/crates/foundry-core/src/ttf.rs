@@ -827,7 +827,7 @@ fn mac_time() -> u64 {
         .unwrap_or(MAC_EPOCH_OFFSET)
 }
 
-fn power_of_two(count: u16) -> (u16, u16, u16) {
+pub(crate) fn power_of_two(count: u16) -> (u16, u16, u16) {
     let mut pow = 1u16;
     let mut log = 0u16;
     while pow.saturating_mul(2) <= count {

@@ -1,13 +1,13 @@
 # Design
 
-The editor window is `typefoundry` (crate `App/crates/foundry-app`). It is a client of `foundry-api`. It reads the font with the `open`, `info`, and `glyph` commands and changes it only with `move_point` and `save`. It never writes font fields itself.
+The editor window is `typefoundry` (crate `App/crates/foundry-app`). It is a client of `foundry-api`. It reads and changes the font through session commands; it never writes font fields itself.
 
 ## The window
 
 The window opens on the **overview**: every glyph as a thumbnail at one shared scale. Double-click a glyph, press Enter, or press Tab to open it in the **editor**. The menus hold everything, and Help > Keyboard shortcuts lists the keys.
 
 - **Menu bar.** File (New font, Open, Open UFO folder, Save, Save As, Quit), Edit (Undo and Redo with step counts, select all, deselect, delete points, smooth or corner, on-curve or off-curve, reverse contour direction), View (overview or editor, zoom, fit, panel and canvas toggles, Settings), Glyph (new, delete, previous, next), Tools (Select, Pen), Effects (Transform, the six effects, round coordinates), and Help.
-- **Toolbar.** Overview and Editor, Select and Pen, Undo and Redo, Effects, then the font name, a dot when there are unsaved changes, and the current glyph.
+- **Toolbar.** Overview and Editor, Select and Pen, Undo and Redo, Effects, then the font name, a dot when there are unsaved changes, and the current glyph. File commands open Type Foundry or Three.js JSON, webfontjson, `.ttf`, `.otf`, `.ttc`, `.otc`, and `.woff` files, or a `.ufo` folder; Save As writes Type Foundry JSON, UFO, or TrueType. The last folder persists between launches.
 - **Overview.** A filter by name or character, a cell-size slider, and New glyph. Thumbnails are drawn once and cached until that glyph changes.
 - **Glyph list.** The left panel, with its own filter. Click to select, double-click to edit.
 - **Editor canvas.** Metric lines with labels, the advance box, black fill (nonzero, so counters stay open), and handles. Scroll or pinch zooms around the pointer, right- or middle-drag pans, and double-click on empty space refits. A panel opening or resizing does not move the glyph under the pointer.

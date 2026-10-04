@@ -15,7 +15,7 @@ foundry run --file commands.jsonl
 foundry mcp
 ```
 
-A `save` command whose path ends in `.ttf` writes an installable TrueType file from the open font. `open`, `check`, and `blend` also read `.ttf`, `.otf`, and the first face of a `.ttc`. See `documents/font-formats.md`.
+A `save` command whose path ends in `.ttf` writes an installable TrueType file from the open font. `open`, `check`, and `blend` also read `.ttf`, `.otf`, `.woff` (WOFF 1), and the first face of a `.ttc` or `.otc`. See `documents/font-formats.md`.
 
 ```json
 {"op":"save","path":"Mid.ttf"}
@@ -29,7 +29,7 @@ A `save` command whose path ends in `.ttf` writes an installable TrueType file f
 
 `foundry-mcp`, or `foundry mcp`, is a stdio MCP server, so a chat client can open, inspect, move points, check, blend, and save. It works only on local files and uploads nothing.
 
-Blend is linear interpolation. Both fonts need the same glyph names, contour counts, point counts, and point types. That is the same rule variable-font masters use. Two unrelated typefaces will be refused until a later matching step exists. `open`, `save`, `check`, and `blend` accept a `.ufo` directory as well as the JSON working file. `open` also reads typeface JSON and web fonts (`.ttf`, `.otf`, `.woff`, `.woff2`, and webfontjson). `save` also writes `.ttf`.
+Blend is linear interpolation. Both fonts need the same glyph names, contour counts, point counts, and point types. That is the same rule variable-font masters use. Two unrelated typefaces will be refused until a later matching step exists. `open`, `save`, `check`, and `blend` accept a `.ufo` directory as well as the JSON working file. `open` also reads typeface JSON and web fonts (`.ttf`, `.otf`, `.woff`, and webfontjson). WOFF2 is refused. `save` also writes `.ttf`.
 
 ## Layout
 

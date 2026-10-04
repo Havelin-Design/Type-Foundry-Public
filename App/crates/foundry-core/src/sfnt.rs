@@ -1,12 +1,14 @@
 //! Binary font import read by [`Font::load`]: TrueType (`.ttf`), OpenType with CFF or CFF2
-//! outlines (`.otf`), and the first face of a collection (`.ttc`, `.otc`).
+//! outlines (`.otf`), the first face of a collection (`.ttc`, `.otc`), and WOFF 1 (`.woff`).
 //!
 //! Outlines arrive as the parser draws them. Composite glyphs are decomposed, TrueType implied
 //! on-curve points become real on-curve points, and a variable font gives its default instance.
-//! WOFF and WOFF2 are recognised and refused with a message that says so.
+//! WOFF 1 is unpacked into an sfnt, then read the same way. WOFF2 is recognised and refused.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Read;
 use std::path::Path;
 
 use ttf_parser::{Face, GlyphId, OutlineBuilder, Tag, name_id};
@@ -17,9 +19,11 @@ use crate::font::{Contour, Font, Glyph, MAX_UPM, MIN_UPM, Point, PointKind, vali
 /// Windows language ID for English (United States) in the `name` table.
 const ENGLISH_US: u16 = 0x0409;
 /// Extensions [`Font::load`] reads as a binary font.
-const IMPORT_EXTENSIONS: [&str; 4] = ["ttf", "otf", "ttc", "otc"];
-/// Extensions that are known font formats but are not imported.
-const REFUSED_EXTENSIONS: [&str; 2] = ["woff", "woff2"];
+const IMPORT_EXTENSIONS: [&str; 5] = ["ttf", "otf", "ttc", "otc", "woff"];
+/// A known font file that is refused, so the error can name the format.
+const REFUSED_EXTENSIONS: [&str; 1] = ["woff2"];
+const WOFF_HEADER: usize = 48;
+const WOFF_ENTRY: usize = 20;
 
 fn extension(path: &Path) -> Option<String> {
     path.extension()
@@ -27,7 +31,7 @@ fn extension(path: &Path) -> Option<String> {
         .map(str::to_ascii_lowercase)
 }
 
-/// True when [`Font::load`] should read the path as a binary font, including WOFF so it can
+/// True when [`Font::load`] should read the path as a binary font, including WOFF2 so it can
 /// refuse it by name.
 pub(crate) fn is_font_binary_path(path: &Path) -> bool {
     extension(path).is_some_and(|ext| {
@@ -55,19 +59,11 @@ pub(crate) fn load_font_binary(path: &Path) -> Result<Font, FoundryError> {
         .map_err(|message| FoundryError::Import(format!("{}: {message}", path.display())))
 }
 
-/// Read face 0 of TrueType, OpenType, or a collection. `fallback_name` names the font when the
-/// file has no family name.
+/// Read face 0 of TrueType, OpenType, a collection, or WOFF 1. `fallback_name` names the font
+/// when the file has no family name.
 pub(crate) fn read_font_binary(bytes: &[u8], fallback_name: &str) -> Result<Font, String> {
-    match bytes.get(..4) {
-        Some(b"wOFF") => {
-            return Err("WOFF is not imported yet; convert it to .ttf or .otf first".to_string());
-        }
-        Some(b"wOF2") => {
-            return Err("WOFF2 is not imported yet; convert it to .ttf or .otf first".to_string());
-        }
-        _ => {}
-    }
-    let face = Face::parse(bytes, 0).map_err(|err| format!("not a readable font: {err}"))?;
+    let sfnt = sfnt_bytes(bytes)?;
+    let face = Face::parse(&sfnt, 0).map_err(|err| format!("not a readable font: {err}"))?;
 
     let upm = face.units_per_em();
     if !(MIN_UPM..=MAX_UPM).contains(&upm) {
@@ -115,6 +111,179 @@ pub(crate) fn read_font_binary(bytes: &[u8], fallback_name: &str) -> Result<Font
     }
     font.glyphs = glyphs;
     Ok(font)
+}
+
+/// Bytes `ttf-parser` can read. WOFF 1 is rebuilt into an sfnt. Anything else is returned as-is,
+/// except WOFF2, which is refused.
+pub(crate) fn sfnt_bytes(bytes: &[u8]) -> Result<Cow<'_, [u8]>, String> {
+    match bytes.get(..4) {
+        Some(b"wOFF") => Ok(Cow::Owned(unpack_woff(bytes)?)),
+        Some(b"wOF2") => {
+            Err("WOFF2 is not imported yet; convert it to .ttf or .otf first".to_string())
+        }
+        _ => Ok(Cow::Borrowed(bytes)),
+    }
+}
+
+struct WoffTable {
+    tag: [u8; 4],
+    checksum: u32,
+    data: Vec<u8>,
+}
+
+/// Rebuild the sfnt a WOFF 1 file wraps. Compressed tables use zlib (RFC 1950). A table stored
+/// with `compLength == origLength` is copied as-is. Metadata and private blocks are skipped.
+fn unpack_woff(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    if bytes.len() < WOFF_HEADER {
+        return Err("WOFF header is truncated".to_string());
+    }
+    let file_len =
+        u32::try_from(bytes.len()).map_err(|_| "WOFF is larger than 4 GiB".to_string())?;
+    if be_u32(bytes, 8) != file_len {
+        return Err("WOFF length does not match the file".to_string());
+    }
+    if be_u16(bytes, 14) != 0 {
+        return Err("WOFF reserved field is not zero".to_string());
+    }
+    let num_tables = usize::from(be_u16(bytes, 12));
+    if num_tables == 0 {
+        return Err("WOFF has no tables".to_string());
+    }
+    let dir_end = WOFF_HEADER + num_tables * WOFF_ENTRY;
+    if bytes.len() < dir_end {
+        return Err("WOFF table directory is truncated".to_string());
+    }
+
+    let mut tables = Vec::with_capacity(num_tables);
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    for index in 0..num_tables {
+        let at = WOFF_HEADER + index * WOFF_ENTRY;
+        let tag: [u8; 4] = bytes[at..at + 4].try_into().unwrap();
+        let offset = usize::try_from(be_u32(bytes, at + 4)).unwrap_or(usize::MAX);
+        let comp_len = usize::try_from(be_u32(bytes, at + 8)).unwrap_or(usize::MAX);
+        let orig_len = usize::try_from(be_u32(bytes, at + 12)).unwrap_or(usize::MAX);
+        let checksum = be_u32(bytes, at + 16);
+        if comp_len > orig_len {
+            return Err(format!(
+                "WOFF table {} is larger compressed than stored",
+                tag_name(&tag)
+            ));
+        }
+        let data = if orig_len == 0 {
+            Vec::new()
+        } else {
+            if offset % 4 != 0 {
+                return Err(format!(
+                    "WOFF table {} is not 4-byte aligned",
+                    tag_name(&tag)
+                ));
+            }
+            let end = offset
+                .checked_add(comp_len)
+                .ok_or_else(|| format!("WOFF table {} offset overflows", tag_name(&tag)))?;
+            if offset < dir_end || end > bytes.len() {
+                return Err(format!("WOFF table {} is outside the file", tag_name(&tag)));
+            }
+            if spans.iter().any(|&(lo, hi)| offset < hi && lo < end) {
+                return Err(format!(
+                    "WOFF table {} overlaps another table",
+                    tag_name(&tag)
+                ));
+            }
+            spans.push((offset, end));
+            if comp_len == orig_len {
+                bytes[offset..end].to_vec()
+            } else {
+                inflate(&bytes[offset..end], orig_len, &tag)?
+            }
+        };
+        tables.push(WoffTable {
+            tag,
+            checksum,
+            data,
+        });
+    }
+    tables.sort_by_key(|table| table.tag);
+    for pair in tables.windows(2) {
+        if pair[0].tag == pair[1].tag {
+            return Err(format!("WOFF repeats table {}", tag_name(&pair[0].tag)));
+        }
+    }
+    assemble_sfnt(be_u32(bytes, 4), &tables)
+}
+
+fn inflate(src: &[u8], orig_len: usize, tag: &[u8; 4]) -> Result<Vec<u8>, String> {
+    let mut decoder = flate2::read::ZlibDecoder::new(src).take(orig_len as u64 + 1);
+    let mut out = Vec::new();
+    decoder
+        .read_to_end(&mut out)
+        .map_err(|err| format!("WOFF table {} did not inflate: {err}", tag_name(tag)))?;
+    if out.len() != orig_len {
+        return Err(format!(
+            "WOFF table {} inflated to {} bytes, not {orig_len}",
+            tag_name(tag),
+            out.len()
+        ));
+    }
+    Ok(out)
+}
+
+fn assemble_sfnt(flavor: u32, tables: &[WoffTable]) -> Result<Vec<u8>, String> {
+    let count = u16::try_from(tables.len()).map_err(|_| "WOFF has too many tables".to_string())?;
+    let (pow, log, _) = crate::ttf::power_of_two(count);
+    let search = pow.saturating_mul(16);
+    let shift = count.saturating_mul(16).saturating_sub(search);
+    let mut out = Vec::new();
+    push_u32(&mut out, flavor);
+    push_u16(&mut out, count);
+    push_u16(&mut out, search);
+    push_u16(&mut out, log);
+    push_u16(&mut out, shift);
+
+    let mut offset = 12 + tables.len() * 16;
+    let mut body = Vec::new();
+    for table in tables {
+        let at = u32::try_from(offset).map_err(|_| "rebuilt sfnt is too large".to_string())?;
+        let len =
+            u32::try_from(table.data.len()).map_err(|_| "WOFF table is too large".to_string())?;
+        out.extend_from_slice(&table.tag);
+        push_u32(&mut out, table.checksum);
+        push_u32(&mut out, at);
+        push_u32(&mut out, len);
+        let padded = table.data.len().div_ceil(4) * 4;
+        body.extend_from_slice(&table.data);
+        body.resize(body.len() + padded - table.data.len(), 0);
+        offset += padded;
+    }
+    out.extend(body);
+    Ok(out)
+}
+
+fn tag_name(tag: &[u8; 4]) -> String {
+    if tag
+        .iter()
+        .all(|byte| byte.is_ascii_graphic() || *byte == b' ')
+    {
+        String::from_utf8_lossy(tag).into_owned()
+    } else {
+        tag.iter().map(|byte| format!("{byte:02X}")).collect()
+    }
+}
+
+fn be_u16(bytes: &[u8], at: usize) -> u16 {
+    u16::from_be_bytes([bytes[at], bytes[at + 1]])
+}
+
+fn be_u32(bytes: &[u8], at: usize) -> u32 {
+    u32::from_be_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
+}
+
+fn push_u16(bytes: &mut Vec<u8>, value: u16) {
+    bytes.extend(value.to_be_bytes());
+}
+
+fn push_u32(bytes: &mut Vec<u8>, value: u32) {
+    bytes.extend(value.to_be_bytes());
 }
 
 /// Typographic family and style when present, else the legacy pair, as `"{family} {style}"`.
@@ -284,6 +453,73 @@ impl OutlineBuilder for Pen {
     fn close(&mut self) {
         self.end_contour();
     }
+}
+
+/// Wrap an sfnt as WOFF 1. When `compress` is set, a table is zlib-compressed only when that
+/// makes it smaller, which is what the WOFF spec allows.
+#[cfg(test)]
+pub(crate) fn wrap_woff(sfnt: &[u8], compress: bool) -> Vec<u8> {
+    let num = usize::from(u16::from_be_bytes([sfnt[4], sfnt[5]]));
+    let mut entries = Vec::with_capacity(num);
+    for index in 0..num {
+        let at = 12 + index * 16;
+        let tag = sfnt[at..at + 4].to_vec();
+        let checksum = u32::from_be_bytes(sfnt[at + 4..at + 8].try_into().unwrap());
+        let offset = u32::from_be_bytes(sfnt[at + 8..at + 12].try_into().unwrap()) as usize;
+        let length = u32::from_be_bytes(sfnt[at + 12..at + 16].try_into().unwrap()) as usize;
+        let data = &sfnt[offset..offset + length];
+        let stored = if compress {
+            let deflated = zlib_compress(data);
+            if deflated.len() < data.len() {
+                deflated
+            } else {
+                data.to_vec()
+            }
+        } else {
+            data.to_vec()
+        };
+        entries.push((tag, checksum, length, stored));
+    }
+
+    let data_at = 48 + num * 20;
+    let mut directory = Vec::new();
+    let mut body = Vec::new();
+    for (tag, checksum, orig_len, stored) in &entries {
+        let cursor = data_at + body.len();
+        directory.extend_from_slice(tag);
+        directory.extend_from_slice(&(cursor as u32).to_be_bytes());
+        directory.extend_from_slice(&(stored.len() as u32).to_be_bytes());
+        directory.extend_from_slice(&(*orig_len as u32).to_be_bytes());
+        directory.extend_from_slice(&checksum.to_be_bytes());
+        body.extend_from_slice(stored);
+        while (data_at + body.len()) % 4 != 0 {
+            body.push(0);
+        }
+    }
+    let total = data_at + body.len();
+    let mut out = Vec::with_capacity(total);
+    out.extend_from_slice(b"wOFF");
+    out.extend_from_slice(&sfnt[..4]);
+    out.extend_from_slice(&(total as u32).to_be_bytes());
+    out.extend_from_slice(&(num as u16).to_be_bytes());
+    out.extend_from_slice(&0u16.to_be_bytes());
+    out.extend_from_slice(&(sfnt.len() as u32).to_be_bytes());
+    out.extend_from_slice(&1u16.to_be_bytes());
+    out.extend_from_slice(&0u16.to_be_bytes());
+    out.extend_from_slice(&[0u8; 24]);
+    out.extend(directory);
+    out.extend(body);
+    assert_eq!(out.len(), total);
+    out
+}
+
+#[cfg(test)]
+fn zlib_compress(data: &[u8]) -> Vec<u8> {
+    use flate2::write::ZlibEncoder;
+    use std::io::Write;
+    let mut encoder = ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(data).unwrap();
+    encoder.finish().unwrap()
 }
 
 #[cfg(test)]
@@ -563,6 +799,93 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
+    fn woff_compressed_a_table(woff: &[u8]) -> bool {
+        let num = usize::from(u16::from_be_bytes([woff[12], woff[13]]));
+        (0..num).any(|index| {
+            let at = 48 + index * 20;
+            let comp = u32::from_be_bytes(woff[at + 8..at + 12].try_into().unwrap());
+            let orig = u32::from_be_bytes(woff[at + 12..at + 16].try_into().unwrap());
+            comp < orig
+        })
+    }
+
+    #[test]
+    fn a_woff_opens_the_same_outlines_as_its_sfnt() {
+        let dir = temp_dir();
+        let ttf_path = dir.join("Round.ttf");
+        face("Round", 0.0, 400.0).save(&ttf_path).unwrap();
+        let ttf = fs::read(&ttf_path).unwrap();
+        let compressed = wrap_woff(&ttf, true);
+        assert!(
+            woff_compressed_a_table(&compressed),
+            "the fixture should zlib-compress at least one table"
+        );
+        let woff_path = dir.join("Round.woff");
+        fs::write(&woff_path, &compressed).unwrap();
+        let from_ttf = Font::load(&ttf_path).unwrap();
+        let from_woff = Font::load(&woff_path).unwrap();
+        assert_eq!(from_woff.name, from_ttf.name);
+        assert_eq!(from_woff.upm, from_ttf.upm);
+        assert_eq!(from_woff.metrics, from_ttf.metrics);
+        assert_eq!(from_woff.glyphs, from_ttf.glyphs);
+
+        let stored = dir.join("Stored.woff");
+        fs::write(&stored, wrap_woff(&ttf, false)).unwrap();
+        assert_eq!(Font::load(&stored).unwrap().glyphs, from_ttf.glyphs);
+
+        let otf_path = dir.join("Cubic.otf");
+        let otf_woff = dir.join("Cubic.woff");
+        fs::write(&otf_path, cff_font()).unwrap();
+        fs::write(&otf_woff, wrap_woff(&fs::read(&otf_path).unwrap(), true)).unwrap();
+        assert_eq!(
+            Font::load(&otf_woff).unwrap().glyphs,
+            Font::load(&otf_path).unwrap().glyphs
+        );
+
+        let refused = from_woff.save(&dir.join("Copy.woff")).unwrap_err();
+        assert!(refused.to_string().contains("not written"), "{refused}");
+        assert!(!dir.join("Copy.woff").exists());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_broken_woff_names_the_problem() {
+        let dir = temp_dir();
+        let short = dir.join("Short.woff");
+        fs::write(&short, b"wOFF").unwrap();
+        let err = Font::load(&short).unwrap_err().to_string();
+        assert!(err.contains("truncated"), "{err}");
+
+        let ttf_path = dir.join("Round.ttf");
+        face("Round", 0.0, 400.0).save(&ttf_path).unwrap();
+        let mut woff = wrap_woff(&fs::read(&ttf_path).unwrap(), true);
+        let num = usize::from(u16::from_be_bytes([woff[12], woff[13]]));
+        let flipped = (0..num).find_map(|index| {
+            let at = 48 + index * 20;
+            let offset = u32::from_be_bytes(woff[at + 4..at + 8].try_into().unwrap()) as usize;
+            let comp = u32::from_be_bytes(woff[at + 8..at + 12].try_into().unwrap()) as usize;
+            let orig = u32::from_be_bytes(woff[at + 12..at + 16].try_into().unwrap()) as usize;
+            (comp < orig && comp > 0).then_some(offset + comp - 1)
+        });
+        woff[flipped.expect("a compressed table")] ^= 0xff;
+        let bad = dir.join("Bad.woff");
+        fs::write(&bad, &woff).unwrap();
+        let err = Font::load(&bad).unwrap_err().to_string();
+        assert!(
+            err.contains("did not inflate") || err.contains("inflated to"),
+            "{err}"
+        );
+
+        woff.push(0);
+        let long = dir.join("Long.woff");
+        fs::write(&long, &woff).unwrap();
+        let err = Font::load(&long).unwrap_err().to_string();
+        assert!(err.contains("does not match"), "{err}");
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn woff_and_garbage_are_refused_by_name() {
         let dir = temp_dir();
@@ -592,8 +915,11 @@ mod tests {
         assert!(is_font_binary_path(Path::new("A.TTF")));
         assert!(is_font_binary_path(Path::new("a.otc")));
         assert!(is_font_binary_path(Path::new("a.woff")));
+        assert!(is_font_binary_path(Path::new("a.woff2")));
         assert!(!is_font_binary_path(Path::new("a.json")));
         assert!(!is_read_only_path(Path::new("a.ttf")));
         assert!(is_read_only_path(Path::new("a.otf")));
+        assert!(is_read_only_path(Path::new("a.woff")));
+        assert!(is_read_only_path(Path::new("a.woff2")));
     }
 }

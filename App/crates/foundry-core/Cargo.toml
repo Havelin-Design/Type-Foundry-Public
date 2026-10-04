@@ -8,6 +8,7 @@ description = "Font document model and compatible-outline blending"
 
 [dependencies]
 base64 = "0.22"
+flate2 = "1"
 norad = "0.18"
 serde.workspace = true
 serde_json.workspace = true

@@ -2,10 +2,10 @@
 //!
 //! A webfontjson file is a JSON or `callback({...})` document whose `css`
 //! field holds `@font-face` rules. Each rule embeds a font as a base64 data
-//! URI. `.ttf`, `.otf`, `.woff`, and `.woff2` open the same way. The outlines
-//! become a Type Foundry font. Embedded OpenType (`.eot`) is refused.
-//! Saving back over `.otf`, `.woff`, or `.woff2` is refused so a JSON write
-//! cannot replace the binary file.
+//! URI. `.ttf` and `.otf` bytes are read directly. WOFF 1 bytes are unpacked
+//! first. WOFF2 and Embedded OpenType (`.eot`) are refused. Saving back over
+//! `.otf`, `.woff`, or `.woff2` is refused so a JSON write cannot replace the
+//! binary file.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -61,12 +61,13 @@ pub(crate) fn load_binary_font(
     bytes: &[u8],
     preferred_name: Option<&str>,
 ) -> Result<Font, FoundryError> {
-    if looks_like_eot(bytes) {
+    if !bytes.starts_with(b"wOFF") && !bytes.starts_with(b"wOF2") && looks_like_eot(bytes) {
         return Err(FoundryError::Import(
             "Embedded OpenType is not imported".to_string(),
         ));
     }
-    let face = Face::parse(bytes, 0)
+    let sfnt = crate::sfnt::sfnt_bytes(bytes).map_err(FoundryError::Import)?;
+    let face = Face::parse(&sfnt, 0)
         .map_err(|err| FoundryError::Import(format!("could not read the web font: {err}")))?;
     let upm = face.units_per_em();
     let preferred = preferred_name
@@ -467,6 +468,35 @@ mod tests {
         );
         let loaded = load_text(&text).unwrap();
         assert_eq!(loaded.name, "Square");
+    }
+
+    #[test]
+    fn an_embedded_woff_round_trips_the_square() {
+        let ttf = write_ttf(&square()).unwrap();
+        let woff = crate::sfnt::wrap_woff(&ttf, true);
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&woff);
+        let text = format!(
+            "fontsLoadedCallback({{\"css\":\"@font-face{{font-family:Square;src:url(data:font/woff;base64,{encoded});font-weight:normal;}}\"}});"
+        );
+        let loaded = load_text(&text).unwrap();
+        assert_eq!(loaded.name, "Square");
+        let h = loaded.glyph("H").unwrap();
+        assert_eq!(h.advance, 400.0);
+        assert_eq!(h.contours[0].points[0], on(40.0, 0.0));
+        assert_eq!(h.contours[0].points.len(), 4);
+    }
+
+    #[test]
+    fn refuses_embedded_woff2() {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(b"wOF2\0\x01\0\0rest");
+        let text = format!(
+            "{{\"css\":\"@font-face{{font-family:Old;src:url(data:font/woff2;base64,{encoded});}}\"}}"
+        );
+        let error = load_text(&text).unwrap_err();
+        assert!(
+            error.to_string().contains("WOFF2 is not imported"),
+            "{error}"
+        );
     }
 
     #[test]

@@ -33,7 +33,7 @@ PM notes live here. Product code lives in `App/`. Plugins, the CLI, and agents s
 
 ## How a font is stored
 
-The working file is JSON, `format` `typefoundry.font`, `version` 1. A glyph is contours of `on` and `off` points, an advance, and an optional unicode. `open`, `save`, `check`, and `blend` also read and write a `.ufo` directory through the same commands. `open` also reads a Three.js typeface JSON file, a webfontjson file, `.ttf`, `.otf`, `.ttc`, and `.otc`. WOFF, WOFF2, and Embedded OpenType are refused. Saving over `.otf`, `.ttc`, `.otc`, `.woff`, `.woff2`, or `.eot` is refused. UFO import keeps the default layer, sorts glyph names, and keeps the first Unicode value. Anchors, guidelines, kerning, groups, and lib data are ignored. Components, images, and implied-on qcurves are refused. `save` to a `.ttf` path writes an installable TrueType file: cubics become quadratics, open contours are closed with a straight edge, and Unicode outside the Basic Multilingual Plane is refused.
+The working file is JSON, `format` `typefoundry.font`, `version` 1. A glyph is contours of `on` and `off` points, an advance, and an optional unicode. `open`, `save`, `check`, and `blend` also read and write a `.ufo` directory through the same commands. `open` also reads a Three.js typeface JSON file, a webfontjson file, `.ttf`, `.otf`, `.ttc`, `.otc`, and WOFF 1 (`.woff`, unpacked into an sfnt). WOFF2 and Embedded OpenType are refused. Saving over `.otf`, `.ttc`, `.otc`, `.woff`, `.woff2`, or `.eot` is refused. UFO import keeps the default layer, sorts glyph names, and keeps the first Unicode value. Anchors, guidelines, kerning, groups, and lib data are ignored. Components, images, and implied-on qcurves are refused. `save` to a `.ttf` path writes an installable TrueType file: cubics become quadratics, open contours are closed with a straight edge, and Unicode outside the Basic Multilingual Plane is refused.
 
 ## How blend works
 
@@ -68,6 +68,15 @@ Frozen for now:
 - Fixed on the way: the typeface.js importer read `q` and `b` control points before the end point, which scrambled every curve. The two `Fonts/Roboto-*.json` subsets were regenerated from the json-fonts source.
 - Validation: fmt, `cargo test --workspace`, and clippy `-D warnings` passed in the Linux container. Smoke under Xvfb on Roboto English: overview, editor, box select plus nudge (one undo step), undo, a 12-degree slant on all 95 glyphs from Effects, a new glyph drawn with the pen and closed, a point added by Alt-click and dragged, smooth toggled, and the result saved.
 - Next: the MCP server still lists its original 9 tools. Add the new edit commands there. Then component support, kerning, and a Bold effect (path offsetting).
+
+### 2026-10-04 — WOFF 1, after the binary-import merge
+
+- Focus: PR #2 is on main. Confirm it on this PC, then take the first next step in `documents/font-formats.md`.
+- Confirmed `906c0d3` (merge of `f53daaf` onto `a1568d6`). The Windows check passed before any new code: 40 tests (4 api, 8 app, 1 cli, 21 core, 6 mcp), 1 ignored, clippy clean. Save As already lists TrueType in `save_as_dialog`. The native dialog was not clicked. Saving a `.ttf` through the session was already covered by `a_saved_ttf_opens_with_names_unicodes_and_points`.
+- Shipped WOFF 1 in `sfnt::unpack_woff`. `flate2` inflates a table when its compressed length is shorter than the original, and a stored table is copied. The sfnt is rebuilt and `ttf-parser` reads it. WOFF2 stays refused. `.woff` stays read-only. A webfontjson file can embed WOFF 1. `documents/api.md`, `README.md`, and `Design/README.md` no longer say that raw `.woff2` opens.
+- Validation: the Windows check passed again. 44 tests (core 25 passed, 1 ignored), clippy clean. The new tests wrap `write_ttf` output, compress at least one table, and compare outlines with the `.ttf` and with the hand-built CFF font. No third-party font.
+- Deferred: picking a collection face, variable-font masters, WOFF2, OTF export, and pen and select tools. Generation stays frozen.
+- Next: optional face index on `open`, `check`, and `blend`.
 
 ### 2026-10-04 — Binary font import (cloud)
 
