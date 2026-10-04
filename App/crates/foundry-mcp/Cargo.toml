@@ -1,16 +1,15 @@
 [package]
-name = "foundry-cli"
+name = "foundry-mcp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "Command line for the type foundry"
+description = "Stdio MCP server over the command session"
 
 [[bin]]
-name = "foundry"
+name = "foundry-mcp"
 path = "src/main.rs"
 
 [dependencies]
 foundry-api.workspace = true
-foundry-mcp.workspace = true
 serde_json.workspace = true

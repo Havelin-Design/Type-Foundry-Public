@@ -62,6 +62,7 @@ name = "foundry-cli"
 version = "0.1.0"
 dependencies = [
  "foundry-api",
+ "foundry-mcp",
  "serde_json",
 ]
 
@@ -73,6 +74,14 @@ dependencies = [
  "serde",
  "serde_json",
  "ttf-parser",
+]
+
+[[package]]
+name = "foundry-mcp"
+version = "0.1.0"
+dependencies = [
+ "foundry-api",
+ "serde_json",
 ]
 
 [[package]]

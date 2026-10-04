@@ -86,3 +86,48 @@ foundry blend narrow.json wide.json --t 0.5 --out mid.json
 ```
 
 `check` and `blend` exit 1 when the fonts are not compatible.
+
+## MCP server
+
+`foundry-mcp` is a stdio MCP server over one command session. `foundry mcp` runs the same server. A chat client can create, open, inspect, move a point, check, blend, and save. There are no generation tools.
+
+Every tool runs on local files only. No tool uploads a font, an outline, or anything else, and the server makes no network calls.
+
+Stdout carries only protocol messages, one JSON-RPC object per line. Logs go to stderr. The server answers `initialize` (it echoes the client's `protocolVersion`), `ping`, `tools/list`, and `tools/call`. A message without an `id` is a notification and gets no reply.
+
+| Tool | Arguments | Command |
+| --- | --- | --- |
+| `font_create` | `name`, `upm?` | `create` |
+| `font_open` | `path` | `open` |
+| `font_save` | `path?` | `save` |
+| `font_info` | none | `info` |
+| `font_glyphs` | none | `glyphs` |
+| `glyph_get` | `name` | `glyph` |
+| `point_move` | `name`, `contour`, `point`, `x`, `y` | `move_point` |
+| `font_check` | `a`, `b` | `check` |
+| `font_blend` | `a`, `b`, `t?`, `out` | `blend` |
+
+A tool result is `{"content":[{"type":"text","text":"..."}],"isError":false}`. The text is the command response JSON. `isError` is true when the command response has `ok: false`, or when the arguments do not fit the tool.
+
+`font_save` without a `path` saves to the last path this server process opened, saved, or blended to. `font_create` clears that path, so a new font needs one explicit `path` the first time. The path lives in the MCP wrapper, not in the session.
+
+Claude Desktop (`claude_desktop_config.json`) or Cursor (`.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "typefoundry": {
+      "command": "C:/Users/Troy Havelin/AppData/Local/typefoundry-target/release/foundry-mcp.exe",
+      "args": []
+    }
+  }
+}
+```
+
+Claude Code:
+
+```text
+claude mcp add typefoundry -- "C:/Users/Troy Havelin/AppData/Local/typefoundry-target/release/foundry-mcp.exe"
+```
+
+Build it first, from `App/`: `cargo build --release -p foundry-mcp`. Pass tool paths with forward slashes, for example `{"path":"C:/fonts/Wide.ufo"}`.

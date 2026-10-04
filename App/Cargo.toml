@@ -4,6 +4,7 @@ members = [
     "crates/foundry-core",
     "crates/foundry-api",
     "crates/foundry-cli",
+    "crates/foundry-mcp",
 ]
 
 [workspace.package]
@@ -16,3 +17,4 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 foundry-core = { path = "crates/foundry-core" }
 foundry-api = { path = "crates/foundry-api" }
+foundry-mcp = { path = "crates/foundry-mcp" }

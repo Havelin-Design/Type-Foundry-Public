@@ -25,6 +25,7 @@ pub enum Cli {
     Run {
         file: Option<PathBuf>,
     },
+    Mcp,
 }
 
 pub fn parse(args: &[String]) -> Result<Cli, String> {
@@ -39,6 +40,7 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
         "check" => parse_check(parsed),
         "blend" => parse_blend(parsed),
         "run" => parse_run(parsed),
+        "mcp" => parse_mcp(parsed),
         other => Err(format!("unknown command {other}")),
     }
 }
@@ -120,6 +122,12 @@ fn parse_run(mut parsed: Parsed) -> Result<Cli, String> {
     Ok(Cli::Run { file })
 }
 
+fn parse_mcp(parsed: Parsed) -> Result<Cli, String> {
+    require_positionals(&parsed, 0, "mcp")?;
+    reject_unknown(parsed)?;
+    Ok(Cli::Mcp)
+}
+
 fn one_path(parsed: Parsed, command: &str) -> Result<PathBuf, String> {
     require_positionals(&parsed, 1, command)?;
     reject_unknown(parsed.clone_flags())?;
@@ -185,8 +193,10 @@ foundry — local type foundry commands
   foundry check A B
   foundry blend A B [--t 0.5] --out FILE
   foundry run [--file FILE]
+  foundry mcp
 
 `run` reads JSON commands from stdin, or from --file. See documents/api.md.
+`mcp` serves the same session as a stdio MCP server, like the foundry-mcp binary.
 "
 }
 
@@ -220,5 +230,7 @@ mod tests {
         );
         assert!(parse(&args("blend a.json --out mid.json")).is_err());
         assert!(parse(&args("new --name Wide")).is_err());
+        assert_eq!(parse(&args("mcp")).unwrap(), Cli::Mcp);
+        assert!(parse(&args("mcp extra")).is_err());
     }
 }

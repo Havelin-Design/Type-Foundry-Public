@@ -91,6 +91,12 @@ fn run(cli: args::Cli) -> Result<ExitCode, String> {
             }
         }
         args::Cli::Run { file } => run_stream(file),
+        args::Cli::Mcp => {
+            let stdin = io::stdin();
+            foundry_mcp::serve(stdin.lock(), io::stdout().lock(), io::stderr().lock())
+                .map_err(|err| err.to_string())?;
+            Ok(ExitCode::SUCCESS)
+        }
     }
 }
 
