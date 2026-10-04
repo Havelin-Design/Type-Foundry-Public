@@ -59,6 +59,15 @@ Frozen for now:
 
 ## Session log
 
+### 2026-10-04 — Windows check of the merged window and MCP
+
+- Focus: PR #1 is on `main`. Confirm the cloud slice on this PC.
+- `main` is `b7eef53`, the merge of `37719dc` onto `dd0ae32`. The local checkout was fast-forwarded to that commit. `foundry-core` was not changed by the window or MCP commits.
+- Validation: `powershell -ExecutionPolicy Bypass -File App/scripts/check.ps1` passed. 28 tests (4 api, 8 app, 1 cli, 9 core, 6 mcp), clippy clean.
+- The release `typefoundry.exe` launched with title `Type Foundry`. The Start menu shortcut `Type Foundry.lnk` was created on first launch and points at `C:\Users\Troy Havelin\AppData\Local\typefoundry-target\release\typefoundry.exe`. The process was then closed.
+- Not done: Save As offers `.json` and `.ufo` only, so a `.ttf` was not saved from the window. `save` and `font_save` already write `.ttf`.
+- Next: add TrueType to the window Save As dialog and proof one file. Then pen and select tools as session commands. Generation stays frozen.
+
 ### 2026-10-04 — Day 2 (cloud): drawing window and MCP server
 
 - Focus: Blocks 2 and 3 of `documents/day-2-agent-prompt.md`. Block 1 was already on `main` (`82f747c`), so it was not rewritten. The cloud agent first built its own Block 1, found `main` had moved, and replayed only the window and MCP commits onto `dd0ae32`.
