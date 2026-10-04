@@ -60,6 +60,15 @@ Frozen for now:
 
 ## Session log
 
+### 2026-10-04 — Windows check of the editor
+
+- Focus: PR #3 is on `main`. Confirm the editor on this PC.
+- Local `main` fast-forwarded from `b43b9e5` to `521a3e0`. The branch adds edit commands and undo (`9c49359`), fixes typeface.js curve order and regenerates the two Roboto files (`d2c18f2`), and rebuilds the window (`362351f`).
+- typeface.js `q` and `b` put the end point first and the control points after, which matches three.js `Font`. The Roboto subsets still load as 95 English glyphs and 255 Cyrillic glyphs.
+- Validation: the Windows check passed. 57 tests (6 api, 13 app, 1 cli, 31 core, 6 mcp), 1 ignored regen test, clippy clean. The release `typefoundry.exe` opened `Fonts/Roboto-English.json` and the window title became `Roboto English — Type Foundry`. The process was then closed. The existing Start menu shortcut was left alone.
+- Not re-done here: the Linux smoke of box select, nudge, slant, and the pen. Those remain self-reported. MCP is still the original 9 tools. `foundry-app/src/lib.rs` still says the window writes only with `move_point`; the window sends the new edit commands.
+- Next: add the new edit commands to the MCP server. A collection face index is still open. Generation stays frozen.
+
 ### 2026-10-04 — Editor UI (cloud)
 
 - Focus: turn the bare window into an editor. Branch `claude/editor-ui`.
