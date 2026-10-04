@@ -17,6 +17,7 @@ pub enum FoundryError {
     Ufo(String),
     Ttf(String),
     Import(String),
+    Edit(String),
     Io(String),
     Json(String),
 }
@@ -43,6 +44,7 @@ impl fmt::Display for FoundryError {
             Self::Ufo(message) => write!(f, "{message}"),
             Self::Ttf(message) => write!(f, "{message}"),
             Self::Import(message) => write!(f, "{message}"),
+            Self::Edit(message) => write!(f, "{message}"),
             Self::Io(message) => write!(f, "{message}"),
             Self::Json(message) => write!(f, "{message}"),
         }
