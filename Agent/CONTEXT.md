@@ -4,9 +4,9 @@ A local professional type kit. Design a font, blend two compatible faces into a 
 
 ## Folder map
 
-- `App/` — Rust workspace. `crates/foundry-core` is the font model and blend. `crates/foundry-api` is the command session. `crates/foundry-cli` is the `foundry` binary.
+- `App/` — Rust workspace. `crates/foundry-core` is the font model, blend, UFO exchange, and TrueType export. `crates/foundry-api` is the command session. `crates/foundry-cli` is the `foundry` binary. `crates/foundry-app` is the `typefoundry` drawing window. `crates/foundry-mcp` is the `foundry-mcp` stdio MCP server.
 - `Agent/CONTEXT.md` — this file.
-- `Design/` — editor direction. No window yet.
+- `Design/` — the window as built, its chrome tokens, and editor direction.
 - `documents/api.md` — the command contract.
 - `documents/shift-reference.md` — what we take from Shift, and what we do not copy.
 - `documents/Keys/` — credentials, gitignored. None yet.
@@ -19,9 +19,9 @@ PM notes live here. Product code lives in `App/`. Plugins, the CLI, and agents s
 
 - Path: `T:\troy-freeform\TypeFoundry`
 - Remote: `git@github.com:thavelin/Type-Foundry.git` — https://github.com/thavelin/Type-Foundry
-- Stack: Rust edition 2024, stable MSVC, serde. No UI crate yet.
-- Version: `v0.1-dev`. Build day 1.
-- Run from `App/`: `cargo run -p foundry-cli -- --help`
+- Stack: Rust edition 2024, stable MSVC, serde, norad 0.18 (UFO), eframe 0.36 on glow plus rfd 0.15 (window). The MCP server is hand-rolled JSON-RPC with no async runtime.
+- Version: `v0.1-dev`. Build day 2.
+- Run from `App/`: `cargo run -p foundry-cli -- --help`. Window: `cargo run -p foundry-app --release`. MCP: `cargo run -p foundry-mcp` or `foundry mcp`.
 - Check: `powershell -ExecutionPolicy Bypass -File App/scripts/check.ps1` from the repo root. This machine's execution policy rejects unsigned scripts.
 - Build output: `C:\Users\Troy Havelin\AppData\Local\typefoundry-target` via `App/.cargo/config.toml`. This share creates programs without execute permission, so the target directory stays on `C:`.
 - Hub: https://app.notion.com/p/3ef627d6cfdc81e4a936e4f714b7aff0 — Projects database, priority Next.
@@ -51,13 +51,24 @@ Frozen for now:
 
 ## Decisions
 
-- Rust owns the font. The window, when it exists, is a client of `foundry-api`.
-- The JSON command stream is the plugin and agent API. An MCP server can wrap it later. It does not get its own font mutations.
+- Rust owns the font. The `typefoundry` window is a client of `foundry-api`. A drag is a `move_point` command.
+- The JSON command stream is the plugin and agent API. `foundry-mcp` wraps it for chat clients. It does not get its own font mutations.
 - Blend refuses incompatible outlines and reports why.
-- House UI, when built, uses the Havelin v2 system surface for chrome. The glyph canvas stays neutral.
+- House UI uses the Havelin v2 system surface for chrome. The glyph canvas stays neutral: BONE ground, black fill, FOCUS / AMBER / SIGNAL handles.
 - Cargo target directory stays on `C:`.
 
 ## Session log
+
+### 2026-10-04 — Day 2 (cloud): drawing window and MCP server
+
+- Focus: Blocks 2 and 3 of `documents/day-2-agent-prompt.md`. Block 1 was already on `main` (`82f747c`), so it was not rewritten. The cloud agent first built its own Block 1, found `main` had moved, and replayed only the window and MCP commits onto `dd0ae32`.
+- Shipped `foundry-mcp` plus `foundry mcp` (`454055d`): 9 tools over `Session::execute`, stdout is protocol only, logs on stderr, `font_save` remembers the last path in the wrapper. Shipped the `typefoundry` window (`8a3317e`): glyph list, fitted canvas, scroll zoom, drag a handle to send `move_point`, open and save JSON or UFO, Start menu shortcut on first Windows launch.
+- Validation: built in a Linux cloud container, so the check ran as its three commands (`cargo fmt --all -- --check`, `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`) with `RUSTUP_TOOLCHAIN=stable` and a local `CARGO_TARGET_DIR`. `rust-toolchain.toml` pins MSVC and there is no PowerShell there. All passed: 28 tests. `foundry-app` also passed clippy for `x86_64-pc-windows-msvc`, which covers the Windows-only shortcut code.
+- Window smoke under Xvfb: the release `typefoundry` started with title `Type Foundry` and drew a UFO. Dragging a point and clicking Save wrote the new coordinate to the UFO. The Start menu shortcut was not exercised because it only runs on Windows.
+- MCP smoke: one `initialize` line on stdin printed exactly one JSON object on stdout. `foundry mcp` is in `foundry --help`.
+- Linux note: `foundry-app` turns on eframe's `x11` and `wayland` features under `cfg(target_os = "linux")` only. The Windows dependency set is the one the plan named.
+- Next: run `check.ps1` and launch the window once on Troy's PC so the shortcut exists. Then proof a `.ttf` saved from the window. After that, pen and select tools (add and delete points, toggle smooth, undo) as new session commands, so plugins and MCP get them too. Generation stays frozen.
+
 
 ### 2026-10-04 — TrueType export
 
@@ -72,7 +83,7 @@ Frozen for now:
 - Focus: stand up the project and the blend engine, using `thavelin/Type-Foundry` as the remote. Shift is the reference, not the codebase.
 - Shipped the workspace, the `typefoundry.font` document, compatible-outline blending, and the `foundry` command stream (`new`, `info`, `check`, `blend`, `run`).
 - Validation: `cargo test --workspace` 7/7 passed. `cargo clippy --workspace --all-targets -- -D warnings` passed. `cargo fmt --all -- --check` passed. CLI smoke blended Narrow advance 400 and Wide advance 800 into `H` advance 600 and wrote `Narrow / Wide @ 0.5`.
-- Next: Troy picks the first product slice. Recommendation is UFO open, blend, and UFO save, so the blend runs on real source files.
+- Next: Troy picked UFO open/blend/save, the drawing window, and the MCP server. UFO landed in `82f747c`. The window and MCP landed in the Day 2 cloud slice.
 
 ### 2026-10-04 — UFO exchange
 

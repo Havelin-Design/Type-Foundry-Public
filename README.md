@@ -12,6 +12,7 @@ foundry check narrow.json wide.json
 foundry blend narrow.json wide.json --t 0.5 --out mid.json
 foundry blend Narrow.ufo Wide.ufo --t 0.5 --out Mid.ufo
 foundry run --file commands.jsonl
+foundry mcp
 ```
 
 A `save` command whose path ends in `.ttf` writes an installable TrueType file from the open font.
@@ -22,14 +23,18 @@ A `save` command whose path ends in `.ttf` writes an installable TrueType file f
 
 `foundry run` reads one JSON command per line. That stream is the plugin and AI surface. See `documents/api.md`.
 
+`typefoundry` is the drawing window. Open a JSON font or a UFO, pick a glyph, and drag points. Each drag is a `move_point` command on the same session. See `Design/README.md`.
+
+`foundry-mcp`, or `foundry mcp`, is a stdio MCP server, so a chat client can open, inspect, move points, check, blend, and save. It works only on local files and uploads nothing.
+
 Blend is linear interpolation. Both fonts need the same glyph names, contour counts, point counts, and point types. That is the same rule variable-font masters use. Two unrelated typefaces will be refused until a later matching step exists. `open`, `save`, `check`, and `blend` accept a `.ufo` directory as well as the JSON working file. `save` also writes `.ttf`.
 
 ## Layout
 
-- `App/` — Rust workspace. `foundry-core` holds the font, `foundry-api` runs commands, `foundry-cli` is the `foundry` binary.
+- `App/` — Rust workspace. `foundry-core` holds the font, `foundry-api` runs commands, `foundry-cli` is the `foundry` binary, `foundry-app` is the `typefoundry` window, `foundry-mcp` is the MCP server.
 - `Agent/CONTEXT.md` — project facts and the session log.
 - `documents/api.md` — the command contract.
-- `Design/` — editor direction, when the window exists.
+- `Design/` — the window and its chrome.
 
 Build output goes to `C:\Users\Troy Havelin\AppData\Local\typefoundry-target` because this share creates files without execute permission.
 
@@ -37,6 +42,8 @@ From `App/`:
 
 ```text
 cargo run -p foundry-cli -- check a.json b.json
+cargo run -p foundry-app --release
+cargo build --release -p foundry-mcp
 powershell -ExecutionPolicy Bypass -File scripts/check.ps1
 ```
 
