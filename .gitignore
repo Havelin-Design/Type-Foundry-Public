@@ -1,0 +1,16 @@
+# Secrets and credentials
+documents/Keys/
+.env
+.env.*
+*.jks
+*.p8
+*.pem
+*.key
+
+# Build output. Cargo writes to C: via App/.cargo/config.toml.
+App/target/
+target/
+
+# NAS index maps. The narrative lives in _CONTEXT.md.
+_MAP.md
+**/_MAP.md
