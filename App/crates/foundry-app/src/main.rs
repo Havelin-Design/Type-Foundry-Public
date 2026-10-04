@@ -134,7 +134,7 @@ impl FoundryWindow {
             dragging: None,
             picked: None,
             status: (
-                "Open a JSON font, a UFO, or a web font.".to_string(),
+                "Open a font file, JSON font, or .ufo folder.".to_string(),
                 Tone::Quiet,
             ),
         }
@@ -247,12 +247,15 @@ impl FoundryWindow {
         }
     }
 
-    fn open_json_dialog(&mut self) {
+    fn open_file_dialog(&mut self) {
         if let Some(path) = self
             .dialog()
             .add_filter("Type Foundry or typeface JSON", &["json"])
             .add_filter("Web font JSON", &["json", "js"])
-            .add_filter("Web font", &["ttf", "otf", "woff", "woff2"])
+            .add_filter(
+                "Font files",
+                &["ttf", "otf", "ttc", "otc", "woff", "woff2", "eot"],
+            )
             .pick_file()
         {
             self.open(path);
@@ -284,6 +287,7 @@ impl FoundryWindow {
             .set_file_name(stem)
             .add_filter("Type Foundry font", &["json"])
             .add_filter("UFO", &["ufo"])
+            .add_filter("TrueType", &["ttf"])
             .save_file()
         {
             self.save_to(path);
@@ -293,7 +297,7 @@ impl FoundryWindow {
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             if ui.button("Open…").clicked() {
-                self.open_json_dialog();
+                self.open_file_dialog();
             }
             if ui.button("Open UFO…").clicked() {
                 self.open_ufo_dialog();
@@ -373,7 +377,7 @@ impl FoundryWindow {
             let hint = if self.session.font().is_some() {
                 "This font has no glyphs."
             } else {
-                "Open a .json font or a .ufo folder."
+                "Open a font file or a .ufo folder."
             };
             painter.text(
                 rect.center(),

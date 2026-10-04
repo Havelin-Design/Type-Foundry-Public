@@ -27,10 +27,14 @@ foundry run --file commands.jsonl
 
 `open` and `save` read and write a project JSON file or a `.ufo` directory. `save` also writes an installable `.ttf` when the path ends in `.ttf`. `open` also reads a Three.js typeface JSON file (the json-fonts shape), a webfontjson file (`callback({"css":"@font-face{...data:...}"})`), and a `.ttf`, `.otf`, `.woff`, or `.woff2`. Those imports become a Type Foundry font in the session. A file with several `@font-face` rules imports the regular face. Embedded OpenType is refused. Saving over `.otf`, `.woff`, or `.woff2` is refused. `check` and `blend` compare or blend JSON and UFO. JSON stays the working document. A UFO import keeps the default layer, sorts glyph names, and keeps the first Unicode value. It ignores anchors, guidelines, kerning, groups, and lib data. It refuses a glyph that has components or an image, and it refuses a qcurve that is not exactly one off-curve point. One off-curve point is a quadratic. Two are a cubic. On the way out, the UFO family name is the font name. TrueType export turns cubics into quadratics, closes an open contour with a straight edge, and refuses a Unicode value outside the Basic Multilingual Plane.
 
+`open`, `check`, and `blend` also read binary fonts: `.ttf`, `.otf` (CFF or CFF2 outlines), and the first face of a `.ttc` or `.otc` collection. The import keeps glyph order, names from `post` or the CFF charset, the lowest Unicode value per glyph, advances, units per em, and the vertical metrics. Composite glyphs are decomposed. TrueType implied on-curve points become real on-curve points. A variable font gives its default instance. Kerning, features, hinting, smooth flags, and other faces in a collection are not imported. A glyph without a stored name is called `uniXXXX`, or `glyphNNNNN` when it has no Unicode. `.woff` and `.woff2` are refused with a message that says so. Saving to `.otf`, `.ttc`, `.otc`, `.woff`, or `.woff2` is refused, so nothing writes JSON under a binary extension. TrueType export now stores glyph names (`post` format 2), so a saved `.ttf` opens with the same names. See `documents/font-formats.md`.
+
 ```json
 {"op":"open","path":"wide.json"}
 {"op":"save","path":"wide.ufo"}
 {"op":"save","path":"wide.ttf"}
+{"op":"open","path":"C:/fonts/Crimson Pro Regular.ttf"}
+{"op":"open","path":"C:/fonts/Loma-Bold.otf"}
 ```
 
 `info` describes the open font. `glyphs` lists names. `glyph` returns one glyph.

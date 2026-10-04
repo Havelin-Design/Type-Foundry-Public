@@ -4,6 +4,7 @@ mod blend;
 mod error;
 mod font;
 mod import;
+mod sfnt;
 mod ttf;
 mod typeface;
 mod ufo;

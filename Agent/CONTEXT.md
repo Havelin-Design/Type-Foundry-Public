@@ -33,7 +33,7 @@ PM notes live here. Product code lives in `App/`. Plugins, the CLI, and agents s
 
 ## How a font is stored
 
-The working file is JSON, `format` `typefoundry.font`, `version` 1. A glyph is contours of `on` and `off` points, an advance, and an optional unicode. `open`, `save`, `check`, and `blend` also read and write a `.ufo` directory through the same commands. `open` also reads a Three.js typeface JSON file, a webfontjson file, and `.ttf`, `.otf`, `.woff`, and `.woff2`. Embedded OpenType is refused. Saving over `.otf`, `.woff`, or `.woff2` is refused. UFO import keeps the default layer, sorts glyph names, and keeps the first Unicode value. Anchors, guidelines, kerning, groups, and lib data are ignored. Components, images, and implied-on qcurves are refused. `save` to a `.ttf` path writes an installable TrueType file: cubics become quadratics, open contours are closed with a straight edge, and Unicode outside the Basic Multilingual Plane is refused.
+The working file is JSON, `format` `typefoundry.font`, `version` 1. A glyph is contours of `on` and `off` points, an advance, and an optional unicode. `open`, `save`, `check`, and `blend` also read and write a `.ufo` directory through the same commands. `open` also reads a Three.js typeface JSON file, a webfontjson file, `.ttf`, `.otf`, `.ttc`, and `.otc`. WOFF, WOFF2, and Embedded OpenType are refused. Saving over `.otf`, `.ttc`, `.otc`, `.woff`, `.woff2`, or `.eot` is refused. UFO import keeps the default layer, sorts glyph names, and keeps the first Unicode value. Anchors, guidelines, kerning, groups, and lib data are ignored. Components, images, and implied-on qcurves are refused. `save` to a `.ttf` path writes an installable TrueType file: cubics become quadratics, open contours are closed with a straight edge, and Unicode outside the Basic Multilingual Plane is refused.
 
 ## How blend works
 
@@ -59,6 +59,13 @@ Frozen for now:
 - Cargo target directory stays on `C:`.
 
 ## Session log
+
+### 2026-10-04 — Binary font import (cloud)
+
+- Focus: open more formats through the same `Font::load`. Branch `claude/font-import`.
+- Shipped `.ttf`, `.otf` (CFF or CFF2), and face 0 of `.ttc` / `.otc` through `open`, `check`, and `blend`, read with `ttf-parser` (now a normal dependency). Composites are decomposed. Implied on-curve points become real. Variable fonts give their default instance. WOFF and WOFF2 are refused by name. Saving to a binary extension other than `.ttf` is refused. TrueType export now writes `post` format 2, so names survive a round trip.
+- Validation: fmt, `cargo test --workspace` (34 tests), and clippy `-D warnings` passed in the Linux container. Tests build their own fonts, including a hand-assembled CFF font. No third-party font is committed. A smoke read 58 local fonts with no failures, including a 45,000-glyph CJK `.ttc` in about 0.34 s.
+- Next: see `documents/font-formats.md`. WOFF 1 and choosing a collection face are the cheap steps. Reading variable-font instances as blend masters is the valuable one.
 
 ### 2026-10-04 — Roboto English, Roboto Cyrillic, and web font import
 

@@ -15,7 +15,7 @@ foundry run --file commands.jsonl
 foundry mcp
 ```
 
-A `save` command whose path ends in `.ttf` writes an installable TrueType file from the open font.
+A `save` command whose path ends in `.ttf` writes an installable TrueType file from the open font. `open`, `check`, and `blend` also read `.ttf`, `.otf`, and the first face of a `.ttc`. See `documents/font-formats.md`.
 
 ```json
 {"op":"save","path":"Mid.ttf"}

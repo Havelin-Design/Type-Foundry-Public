@@ -126,9 +126,14 @@ impl Font {
         Ok(font)
     }
 
+    /// Read `typefoundry.font` JSON, a `.ufo` directory, or face 0 of a `.ttf`, `.otf`, `.ttc`,
+    /// or `.otc` file.
     pub fn load(path: &Path) -> Result<Self, FoundryError> {
         if crate::ufo::is_ufo_path(path) {
             return crate::ufo::load_ufo(path);
+        }
+        if crate::sfnt::is_font_binary_path(path) {
+            return crate::sfnt::load_font_binary(path);
         }
         if crate::webfont::is_binary_font_path(path) {
             let bytes = fs::read(path).map_err(|err| FoundryError::Io(err.to_string()))?;
@@ -140,6 +145,12 @@ impl Font {
 
     pub fn save(&self, path: &Path) -> Result<(), FoundryError> {
         self.validate()?;
+        if crate::sfnt::is_read_only_path(path) {
+            return Err(FoundryError::Import(format!(
+                "{} can be opened but not written; save to .ttf, .ufo, or .json",
+                path.display()
+            )));
+        }
         if crate::webfont::is_readonly_web_font_path(path) {
             return Err(FoundryError::Import(
                 "save writes .json, .ufo, or .ttf. Use one of those paths after opening a web font."
