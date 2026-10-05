@@ -4,6 +4,7 @@
 mod app;
 mod canvas;
 mod effects;
+mod family_ui;
 mod grid;
 mod panels;
 mod settings;

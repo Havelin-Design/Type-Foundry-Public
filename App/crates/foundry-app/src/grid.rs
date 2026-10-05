@@ -191,69 +191,107 @@ impl FoundryWindow {
             );
         });
         let size = self.settings.preview_size;
-        let height = size * 1.45;
+        let line_height = size * 1.45;
+        // One line for the active font, or one per style of its family.
+        let family = self
+            .session
+            .font()
+            .map(|font| font.style.family.clone())
+            .unwrap_or_default();
+        let lines: Vec<(u32, String)> = if self.family_preview {
+            self.tabs
+                .iter()
+                .filter(|tab| tab.family == family)
+                .map(|tab| (tab.id, tab.style.clone()))
+                .collect()
+        } else {
+            self.active
+                .map(|id| (id, String::new()))
+                .into_iter()
+                .collect()
+        };
+        let height = line_height * lines.len().max(1) as f32;
         let (rect, response) =
             ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::click());
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, CornerRadius::same(3), color(BONE));
         let span = (self.ascender - self.descender).abs().max(1.0);
         let scale = f64::from(size) / span;
-        let baseline =
-            f64::from(rect.top()) + f64::from(height - size) / 2.0 + self.ascender * scale;
-        let mut x = f64::from(rect.left()) + 12.0;
-        let mut clicked = None;
         let pointer = response
             .clicked()
             .then(|| response.interact_pointer_pos())
             .flatten();
+        let mut clicked = None;
         let text = self.preview_text.clone();
-        for ch in text.chars() {
-            if x > f64::from(rect.right()) {
-                break;
-            }
-            let Some(name) = self.by_unicode.get(&u32::from(ch)).cloned() else {
-                // A missing character shows as a hollow box.
-                let width = span * 0.5 * scale;
-                let missing = Rect::from_min_size(
-                    Pos2::new(x as f32 + 2.0, (baseline - self.cap_height * scale) as f32),
-                    Vec2::new(width as f32 - 4.0, (self.cap_height * scale) as f32),
-                );
-                painter.rect_stroke(
-                    missing,
-                    CornerRadius::ZERO,
-                    Stroke::new(1.0, color(MUTED)),
-                    egui::StrokeKind::Inside,
-                );
-                x += width;
-                continue;
-            };
-            let Some(outline) = self.outline(&name) else {
-                continue;
-            };
-            let view = Viewport {
-                scale,
-                origin: Pt::new(x, baseline),
-            };
-            paint_fill(&painter, &view, rect, &outline, Color32::BLACK);
-            let advance = outline.advance * scale;
-            if self.current.as_deref() == Some(name.as_str()) {
-                // Underline the glyph being edited.
-                let y = (baseline - self.descender * scale * 0.5) as f32;
-                painter.hline(
-                    (x as f32)..=((x + advance) as f32),
-                    y,
-                    Stroke::new(2.0, color(FOCUS)),
+        for (row, (id, label)) in lines.iter().enumerate() {
+            let top = f64::from(rect.top()) + f64::from(line_height) * row as f64;
+            let baseline = top + f64::from(line_height - size) / 2.0 + self.ascender * scale;
+            let mut x = f64::from(rect.left()) + 12.0;
+            if !label.is_empty() {
+                painter.text(
+                    Pos2::new(rect.right() - 8.0, top as f32 + 4.0),
+                    egui::Align2::RIGHT_TOP,
+                    label,
+                    egui::FontId::proportional(10.0),
+                    color(MUTED),
                 );
             }
-            if let Some(press) = pointer
-                && f64::from(press.x) >= x
-                && f64::from(press.x) < x + advance
-            {
-                clicked = Some(name.clone());
+            let in_row = pointer.filter(|press| {
+                f64::from(press.y) >= top && f64::from(press.y) < top + f64::from(line_height)
+            });
+            for ch in text.chars() {
+                if x > f64::from(rect.right()) {
+                    break;
+                }
+                let outline = self
+                    .by_unicode
+                    .get(&u32::from(ch))
+                    .cloned()
+                    .and_then(|name| self.outline_in(*id, &name));
+                let Some(outline) = outline else {
+                    // A missing character shows as a hollow box.
+                    let width = span * 0.5 * scale;
+                    let missing = Rect::from_min_size(
+                        Pos2::new(x as f32 + 2.0, (baseline - self.cap_height * scale) as f32),
+                        Vec2::new(width as f32 - 4.0, (self.cap_height * scale) as f32),
+                    );
+                    painter.rect_stroke(
+                        missing,
+                        CornerRadius::ZERO,
+                        Stroke::new(1.0, color(MUTED)),
+                        egui::StrokeKind::Inside,
+                    );
+                    x += width;
+                    continue;
+                };
+                let view = Viewport {
+                    scale,
+                    origin: Pt::new(x, baseline),
+                };
+                paint_fill(&painter, &view, rect, &outline, Color32::BLACK);
+                let advance = outline.advance * scale;
+                if Some(*id) == self.active
+                    && self.current.as_deref() == Some(outline.name.as_str())
+                {
+                    // Underline the glyph being edited.
+                    let y = (baseline - self.descender * scale * 0.5) as f32;
+                    painter.hline(
+                        (x as f32)..=((x + advance) as f32),
+                        y,
+                        Stroke::new(2.0, color(FOCUS)),
+                    );
+                }
+                if let Some(press) = in_row
+                    && f64::from(press.x) >= x
+                    && f64::from(press.x) < x + advance
+                {
+                    clicked = Some((*id, outline.name.clone()));
+                }
+                x += advance;
             }
-            x += advance;
         }
-        if let Some(name) = clicked {
+        if let Some((id, name)) = clicked {
+            self.switch_to(id);
             self.select_glyph(Some(name));
             if self.mode == Mode::Editor {
                 self.view = None;

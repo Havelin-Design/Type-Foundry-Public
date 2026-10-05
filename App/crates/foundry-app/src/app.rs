@@ -43,6 +43,15 @@ pub enum Scope {
     Font,
 }
 
+/// One open font, as the window lists it in the tab row.
+#[derive(Clone)]
+pub struct FontTab {
+    pub id: u32,
+    pub family: String,
+    pub style: String,
+    pub dirty: bool,
+}
+
 pub struct GlyphEntry {
     pub name: String,
     pub unicode: Option<u32>,
@@ -79,12 +88,24 @@ pub struct Dialogs {
     pub settings: bool,
     pub shortcuts: bool,
     pub about: bool,
+    pub new_style: Option<crate::family_ui::NewStyle>,
+    pub export: Option<crate::family_ui::ExportForm>,
+    pub report: Option<crate::family_ui::Report>,
+    pub close_confirm: Option<u32>,
 }
 
 pub struct FoundryWindow {
     pub session: Session,
-    /// The file the font came from or was last saved to. Held here, not in the session.
-    pub path: Option<PathBuf>,
+    /// The file each open font came from or was last saved to, by font id. Held here, not in
+    /// the session.
+    pub paths: HashMap<u32, PathBuf>,
+    /// Open fonts, in tab order, as `fonts` last reported them.
+    pub tabs: Vec<FontTab>,
+    pub active: Option<u32>,
+    /// A font drawn as a faint outline behind the editor, to compare styles.
+    pub compare: Option<u32>,
+    pub family_preview: bool,
+    pub style: crate::family_ui::StyleFields,
     pub last_dir: Option<PathBuf>,
     pub font_name: String,
     pub upm: u16,
@@ -94,7 +115,8 @@ pub struct FoundryWindow {
     pub cap_height: f64,
     pub glyphs: Vec<GlyphEntry>,
     pub by_unicode: HashMap<u32, String>,
-    pub outlines: HashMap<String, Outline>,
+    /// Outlines read from the session, by font id and glyph name.
+    pub outlines: HashMap<(u32, String), Outline>,
     pub thumbs: HashMap<String, egui::TextureHandle>,
     pub mode: Mode,
     pub tool: Tool,
@@ -111,7 +133,6 @@ pub struct FoundryWindow {
     pub preview_text: String,
     pub filter: String,
     pub status: (String, Tone),
-    pub dirty: bool,
     shown_title: String,
     // Inspector text fields, kept between frames while they are being typed in.
     pub font_name_edit: String,
@@ -124,7 +145,12 @@ impl FoundryWindow {
     pub fn new(last_dir: Option<PathBuf>, settings: Settings) -> Self {
         Self {
             session: Session::new(),
-            path: None,
+            paths: HashMap::new(),
+            tabs: Vec::new(),
+            active: None,
+            compare: None,
+            family_preview: false,
+            style: crate::family_ui::StyleFields::default(),
             last_dir,
             font_name: String::new(),
             upm: 1000,
@@ -153,7 +179,6 @@ impl FoundryWindow {
                 "File > Open a font, or File > New font. Ctrl+O opens.".to_string(),
                 Tone::Quiet,
             ),
-            dirty: false,
             shown_title: String::new(),
             font_name_edit: String::new(),
             glyph_name_edit: String::new(),
@@ -187,14 +212,13 @@ impl FoundryWindow {
         if !response.ok {
             return None;
         }
-        self.dirty = true;
+        self.refresh_tabs();
         match scope {
             Scope::Glyph(name) => self.forget(&name),
             Scope::Structure => {
                 self.refresh_index();
                 self.refresh_info();
-                self.outlines.clear();
-                self.thumbs.clear();
+                self.forget_font();
                 if self
                     .current
                     .as_ref()
@@ -232,7 +256,9 @@ impl FoundryWindow {
     }
 
     fn forget(&mut self, name: &str) {
-        self.outlines.remove(name);
+        if let Some(id) = self.active {
+            self.outlines.remove(&(id, name.to_string()));
+        }
         self.thumbs.remove(name);
         self.prune_selection();
     }
@@ -273,7 +299,7 @@ impl FoundryWindow {
     }
 
     pub fn refresh_index(&mut self) {
-        let response = self.session.execute(Command::Index);
+        let response = self.session.execute(Command::Index { font: None });
         let entries = response
             .data
             .as_ref()
@@ -297,17 +323,75 @@ impl FoundryWindow {
             .collect();
     }
 
-    /// The outline of a glyph, read through the `glyph` command and cached.
+    /// The outline of a glyph in the active font, read through the `glyph` command and cached.
     pub fn outline(&mut self, name: &str) -> Option<Outline> {
-        if let Some(found) = self.outlines.get(name) {
+        let id = self.active?;
+        self.outline_in(id, name)
+    }
+
+    /// The outline of a glyph in any open font.
+    pub fn outline_in(&mut self, id: u32, name: &str) -> Option<Outline> {
+        let key = (id, name.to_string());
+        if let Some(found) = self.outlines.get(&key) {
             return Some(found.clone());
         }
         let response = self.session.execute(Command::Glyph {
             name: name.to_string(),
+            font: Some(id),
         });
         let outline = response.data.as_ref().and_then(Outline::from_json)?;
-        self.outlines.insert(name.to_string(), outline.clone());
+        self.outlines.insert(key, outline.clone());
         Some(outline)
+    }
+
+    /// Drop everything cached about the active font.
+    fn forget_font(&mut self) {
+        if let Some(id) = self.active {
+            self.outlines.retain(|(font, _), _| *font != id);
+        }
+        self.thumbs.clear();
+    }
+
+    pub fn refresh_tabs(&mut self) {
+        let response = self.session.execute(Command::Fonts);
+        let Some(data) = response.data else {
+            return;
+        };
+        self.tabs = data["fonts"]
+            .as_array()
+            .map(|fonts| {
+                fonts
+                    .iter()
+                    .filter_map(|font| {
+                        Some(FontTab {
+                            id: u32::try_from(font["id"].as_u64()?).ok()?,
+                            family: font["family"].as_str().unwrap_or_default().to_string(),
+                            style: font["style"].as_str().unwrap_or_default().to_string(),
+                            dirty: font["dirty"].as_bool().unwrap_or(false),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.active = data["active"]
+            .as_u64()
+            .and_then(|id| u32::try_from(id).ok());
+        if self
+            .compare
+            .is_some_and(|id| Some(id) == self.active || !self.tabs.iter().any(|tab| tab.id == id))
+        {
+            self.compare = None;
+        }
+    }
+
+    pub fn dirty(&self) -> bool {
+        self.tabs
+            .iter()
+            .any(|tab| Some(tab.id) == self.active && tab.dirty)
+    }
+
+    pub fn current_path(&self) -> Option<PathBuf> {
+        self.active.and_then(|id| self.paths.get(&id).cloned())
     }
 
     pub fn current_outline(&mut self) -> Option<Outline> {
@@ -346,22 +430,57 @@ impl FoundryWindow {
 
     // ---- Files ------------------------------------------------------------------------
 
-    fn load_new_font(&mut self, data: Option<&Value>) {
+    /// Read a newly opened or created font and show its overview.
+    pub fn load_new_font(&mut self) {
+        self.font_switched();
+        self.current = self.glyphs.first().map(|entry| entry.name.clone());
+        self.view = None;
+        self.mode = Mode::Overview;
+    }
+
+    /// Re-read everything after the active font changed. The same glyph stays selected when
+    /// the new font has it, so flipping between Regular and Italic keeps your place.
+    pub fn font_switched(&mut self) {
+        self.refresh_tabs();
         self.refresh_info();
         self.refresh_index();
-        self.outlines.clear();
         self.thumbs.clear();
         self.selection.clear();
         self.pen_contour = None;
-        self.view = None;
-        self.current = data
-            .and_then(|data| data["glyphs"].get(0))
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .or_else(|| self.glyphs.first().map(|entry| entry.name.clone()));
-        self.mode = Mode::Overview;
-        self.dirty = false;
+        self.drag = Drag::None;
         self.edits_for = None;
+        self.style.loaded_for = None;
+        let keep = self
+            .current
+            .as_ref()
+            .is_some_and(|name| self.glyphs.iter().any(|entry| &entry.name == name));
+        if !keep {
+            self.current = self.glyphs.first().map(|entry| entry.name.clone());
+            self.view = None;
+        }
+    }
+
+    pub fn switch_to(&mut self, id: u32) {
+        if Some(id) == self.active {
+            return;
+        }
+        if self.run(Command::SelectFont { id }).ok {
+            self.font_switched();
+        }
+    }
+
+    pub fn step_font(&mut self, by: isize) {
+        if self.tabs.len() < 2 {
+            return;
+        }
+        let index = self
+            .tabs
+            .iter()
+            .position(|tab| Some(tab.id) == self.active)
+            .unwrap_or(0) as isize;
+        let next = (index + by).rem_euclid(self.tabs.len() as isize) as usize;
+        let id = self.tabs[next].id;
+        self.switch_to(id);
     }
 
     pub fn open(&mut self, path: PathBuf) {
@@ -372,8 +491,10 @@ impl FoundryWindow {
             return;
         }
         self.remember_dir(&path);
-        self.path = Some(path.clone());
-        self.load_new_font(response.data.as_ref());
+        if let Some(id) = response.data.as_ref().and_then(|data| data["id"].as_u64()) {
+            self.paths.insert(id as u32, path.clone());
+        }
+        self.load_new_font();
         self.status = (
             format!("Opened {} · {} glyphs", path.display(), self.glyphs.len()),
             Tone::Done,
@@ -383,8 +504,7 @@ impl FoundryWindow {
     pub fn create(&mut self, name: String, upm: u16) {
         let response = self.run(Command::Create { name, upm });
         if response.ok {
-            self.path = None;
-            self.load_new_font(response.data.as_ref());
+            self.load_new_font();
             self.status = (
                 "New font. Glyph > New glyph adds the first one.".to_string(),
                 Tone::Done,
@@ -399,13 +519,15 @@ impl FoundryWindow {
         if response.ok {
             self.remember_dir(&path);
             self.status = (format!("Saved {}", path.display()), Tone::Done);
-            self.path = Some(path);
-            self.dirty = false;
+            if let Some(id) = self.active {
+                self.paths.insert(id, path);
+            }
+            self.refresh_tabs();
         }
     }
 
     pub fn save(&mut self) {
-        match self.path.clone() {
+        match self.current_path() {
             Some(path) if is_writable(&path) => self.save_to(path),
             _ => self.save_as_dialog(),
         }
@@ -461,11 +583,16 @@ impl FoundryWindow {
 
     pub fn save_as_dialog(&mut self) {
         let stem = self
-            .path
-            .as_ref()
-            .and_then(|path| path.file_stem())
-            .map(|name| format!("{}.json", name.to_string_lossy()))
-            .unwrap_or_else(|| format!("{}.json", self.font_name));
+            .current_path()
+            .and_then(|path| {
+                path.file_stem()
+                    .map(|name| name.to_string_lossy().into_owned())
+            })
+            .or_else(|| self.session.font().map(|font| font.file_stem()))
+            .map_or_else(
+                || "Untitled.json".to_string(),
+                |stem| format!("{stem}.json"),
+            );
         if let Some(path) = self
             .dialog()
             .set_file_name(stem)
@@ -666,12 +793,33 @@ impl FoundryWindow {
                 if item(ui, "Open UFO folder…", "", true) {
                     self.open_ufo_dialog();
                 }
+                if item(ui, "Open family…", "", true) {
+                    self.open_family_dialog();
+                }
                 ui.separator();
                 if item(ui, "Save", "Ctrl+S", has_font) {
                     self.save();
                 }
                 if item(ui, "Save As…", "Ctrl+Shift+S", has_font) {
                     self.save_as_dialog();
+                }
+                if item(ui, "Close font", "Ctrl+W", has_font)
+                    && let Some(id) = self.active
+                {
+                    self.request_close(id);
+                }
+                ui.separator();
+                if item(ui, "New style from this font…", "Ctrl+Shift+D", has_font) {
+                    self.open_new_style();
+                }
+                if item(ui, "Save family…", "", has_font) {
+                    self.save_family_dialog();
+                }
+                if item(ui, "Export family…", "", has_font) {
+                    self.dialogs.export = Some(crate::family_ui::ExportForm { format: "ttf" });
+                }
+                if item(ui, "Check family", "", has_font) {
+                    self.family_check();
                 }
                 ui.separator();
                 if item(ui, "Quit", "Ctrl+Q", true) {
@@ -733,6 +881,7 @@ impl FoundryWindow {
                 ui.checkbox(&mut self.settings.show_glyph_list, "Glyph list");
                 ui.checkbox(&mut self.settings.show_inspector, "Inspector");
                 ui.checkbox(&mut self.settings.show_preview, "Preview strip");
+                ui.checkbox(&mut self.family_preview, "Preview every style");
                 ui.separator();
                 ui.checkbox(&mut self.settings.fill, "Fill");
                 ui.checkbox(&mut self.settings.outline, "Outline stroke");
@@ -846,12 +995,14 @@ impl FoundryWindow {
             {
                 self.effects.open = true;
             }
+            ui.separator();
+            self.compare_picker(ui);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if let Some(name) = &self.current {
                     ui.weak(name);
                 }
                 if !self.font_name.is_empty() {
-                    let marker = if self.dirty { " •" } else { "" };
+                    let marker = if self.dirty() { " •" } else { "" };
                     ui.strong(format!("{}{marker}", self.font_name));
                 }
             });
@@ -904,6 +1055,20 @@ impl FoundryWindow {
                 unicode: String::new(),
                 advance: f64::from(self.upm) * 0.6,
             });
+        }
+        if pressed(command_shift(Key::D)) && self.has_font() {
+            self.open_new_style();
+        }
+        if pressed(command_shift(Key::Tab)) {
+            self.step_font(-1);
+        }
+        if pressed(command(Key::Tab)) {
+            self.step_font(1);
+        }
+        if pressed(command(Key::W))
+            && let Some(id) = self.active
+        {
+            self.request_close(id);
         }
         if pressed(command(Key::N)) {
             self.dialogs.new_font = Some(NewFont {
@@ -1145,7 +1310,7 @@ impl FoundryWindow {
         let title = if self.font_name.is_empty() {
             APP_TITLE.to_string()
         } else {
-            let marker = if self.dirty { "• " } else { "" };
+            let marker = if self.dirty() { "• " } else { "" };
             format!("{marker}{} — {APP_TITLE}", self.font_name)
         };
         if title != self.shown_title {
@@ -1171,6 +1336,11 @@ impl eframe::App for FoundryWindow {
         egui::Panel::top("toolbar")
             .frame(bar)
             .show(ui, |ui| self.toolbar(ui));
+        if self.has_font() {
+            egui::Panel::top("fonts")
+                .frame(bar)
+                .show(ui, |ui| self.tab_row(ui));
+        }
         egui::Panel::bottom("status")
             .frame(bar)
             .show(ui, |ui| self.status_bar(ui));
@@ -1204,6 +1374,7 @@ impl eframe::App for FoundryWindow {
             });
 
         self.dialogs(&ctx);
+        self.family_dialogs(&ctx);
         self.effects_window(&ctx);
     }
 
