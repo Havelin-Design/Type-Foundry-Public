@@ -6,8 +6,11 @@ mod canvas;
 mod effects;
 mod family_ui;
 mod grid;
+mod icons;
 mod panels;
+mod preview;
 mod settings;
+mod shapes;
 
 use std::path::PathBuf;
 
@@ -19,6 +22,7 @@ use foundry_app::palette::{
 pub const APP_TITLE: &str = "Type Foundry";
 pub const LAST_DIR_KEY: &str = "last_dir";
 pub const SETTINGS_KEY: &str = "settings";
+pub const COPY_KEY: &str = "preview_copy";
 
 /// One of the named chrome colors.
 pub fn color(hex: u32) -> Color32 {
@@ -35,7 +39,8 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_title(APP_TITLE)
             .with_inner_size([1360.0, 860.0])
-            .with_min_inner_size([760.0, 480.0]),
+            .with_min_inner_size([760.0, 480.0])
+            .with_icon(app_icon()),
         ..Default::default()
     };
     eframe::run_native(
@@ -52,12 +57,41 @@ fn main() -> eframe::Result {
                 .and_then(|storage| eframe::get_value::<settings::Settings>(storage, SETTINGS_KEY))
                 .unwrap_or_default();
             let mut window = app::FoundryWindow::new(last_dir, settings);
+            if let Some(copy) = cc
+                .storage
+                .and_then(|storage| eframe::get_value(storage, COPY_KEY))
+            {
+                window.copy = copy;
+            }
             if let Some(path) = std::env::args().nth(1) {
                 window.open(PathBuf::from(path));
             }
             Ok(Box::new(window))
         }),
     )
+}
+
+/// The mark from `assets/type-foundry-icon.png`, as straight RGBA.
+fn app_icon() -> egui::IconData {
+    let bytes = include_bytes!("../assets/type-foundry-icon.png");
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes.as_slice()));
+    decoder.set_transformations(png::Transformations::EXPAND);
+    let mut reader = decoder.read_info().expect("the app icon is a png");
+    let mut rgba = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut rgba).expect("the app icon decodes");
+    rgba.truncate(info.buffer_size());
+    if info.color_type == png::ColorType::Rgb {
+        let rgb = rgba;
+        rgba = Vec::with_capacity(rgb.len() / 3 * 4);
+        for pixel in rgb.as_chunks::<3>().0 {
+            rgba.extend_from_slice(&[pixel[0], pixel[1], pixel[2], 255]);
+        }
+    }
+    egui::IconData {
+        rgba,
+        width: info.width,
+        height: info.height,
+    }
 }
 
 fn apply_chrome(ctx: &egui::Context) {
@@ -122,6 +156,7 @@ mod shortcut {
              $s.TargetPath = {target}; \
              $s.WorkingDirectory = {dir}; \
              $s.Description = 'Type Foundry'; \
+             $s.IconLocation = {target} + ',0'; \
              $s.Save()",
             link = quote(&link.to_string_lossy()),
             target = quote(TARGET),
@@ -136,5 +171,17 @@ mod shortcut {
             Ok(status) => eprintln!("Start menu shortcut was not created: {status}"),
             Err(err) => eprintln!("Start menu shortcut was not created: {err}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_app_icon_is_the_square_mark() {
+        let icon = super::app_icon();
+        assert_eq!((icon.width, icon.height), (256, 256));
+        assert_eq!(icon.rgba.len(), 256 * 256 * 4);
+        let visible = icon.rgba.chunks(4).filter(|pixel| pixel[3] > 16).count();
+        assert!(visible > 1000, "{visible}");
     }
 }

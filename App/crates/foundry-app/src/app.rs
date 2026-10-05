@@ -11,8 +11,10 @@ use foundry_app::{Handle, Outline, Pt, Viewport};
 use serde_json::{Value, json};
 
 use crate::effects::EffectsState;
+use crate::icons::IconSet;
+use crate::preview::{Block, starter_copy};
 use crate::settings::Settings;
-use crate::{APP_TITLE, LAST_DIR_KEY, SETTINGS_KEY, color};
+use crate::{APP_TITLE, COPY_KEY, LAST_DIR_KEY, SETTINGS_KEY, color};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -24,6 +26,8 @@ pub enum Mode {
 pub enum Tool {
     Select,
     Pen,
+    Rectangle,
+    Oval,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -67,6 +71,11 @@ pub enum Drag {
         start: Pt,
         now: Pt,
         additive: bool,
+    },
+    /// A rectangle or oval drag, in font units. `start` is where the button went down.
+    Shape {
+        start: Pt,
+        now: Pt,
     },
 }
 
@@ -129,8 +138,10 @@ pub struct FoundryWindow {
     pub pen_contour: Option<usize>,
     pub settings: Settings,
     pub effects: EffectsState,
+    pub icons: IconSet,
     pub dialogs: Dialogs,
-    pub preview_text: String,
+    /// Headline and paragraph blocks for the preview pane. View state, not part of the font.
+    pub copy: Vec<Block>,
     pub filter: String,
     pub status: (String, Tone),
     shown_title: String,
@@ -172,11 +183,12 @@ impl FoundryWindow {
             pen_contour: None,
             settings,
             effects: EffectsState::default(),
+            icons: IconSet::default(),
             dialogs: Dialogs::default(),
-            preview_text: "Hamburgefonstiv 0123".to_string(),
+            copy: starter_copy(),
             filter: String::new(),
             status: (
-                "File > Open a font, or File > New font. Ctrl+O opens.".to_string(),
+                "File > Open a font, File > Open SVG folder…, or File > New font.".to_string(),
                 Tone::Quiet,
             ),
             shown_title: String::new(),
@@ -414,6 +426,24 @@ impl FoundryWindow {
         self.mode = Mode::Editor;
     }
 
+    /// Switch tools. Drawing tools open the editor when a glyph is selected.
+    pub fn choose_tool(&mut self, tool: Tool) {
+        if self.tool != tool {
+            self.pen_contour = None;
+            if matches!(self.drag, Drag::Marquee { .. } | Drag::Shape { .. }) {
+                self.drag = Drag::None;
+            }
+            self.tool = tool;
+        }
+        if matches!(tool, Tool::Pen | Tool::Rectangle | Tool::Oval) {
+            if self.current.is_some() {
+                self.mode = Mode::Editor;
+            } else {
+                self.status = ("Select a glyph, then draw.".into(), Tone::Quiet);
+            }
+        }
+    }
+
     pub fn step_glyph(&mut self, by: isize) {
         if self.glyphs.is_empty() {
             return;
@@ -534,8 +564,15 @@ impl FoundryWindow {
     }
 
     fn remember_dir(&mut self, path: &Path) {
-        if let Some(parent) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
-            self.last_dir = Some(parent.to_path_buf());
+        let dir = if path.is_dir() {
+            Some(path.to_path_buf())
+        } else {
+            path.parent()
+                .filter(|dir| !dir.as_os_str().is_empty())
+                .map(Path::to_path_buf)
+        };
+        if let Some(dir) = dir {
+            self.last_dir = Some(dir);
         }
     }
 
@@ -578,6 +615,12 @@ impl FoundryWindow {
                     Tone::Failed,
                 );
             }
+        }
+    }
+
+    pub fn open_svg_dialog(&mut self) {
+        if let Some(path) = self.dialog().pick_folder() {
+            self.open(path);
         }
     }
 
@@ -793,6 +836,9 @@ impl FoundryWindow {
                 if item(ui, "Open UFO folder…", "", true) {
                     self.open_ufo_dialog();
                 }
+                if item(ui, "Open SVG folder…", "", true) {
+                    self.open_svg_dialog();
+                }
                 if item(ui, "Open family…", "", true) {
                     self.open_family_dialog();
                 }
@@ -880,7 +926,7 @@ impl FoundryWindow {
                 ui.separator();
                 ui.checkbox(&mut self.settings.show_glyph_list, "Glyph list");
                 ui.checkbox(&mut self.settings.show_inspector, "Inspector");
-                ui.checkbox(&mut self.settings.show_preview, "Preview strip");
+                ui.checkbox(&mut self.settings.show_preview, "Preview pane");
                 ui.checkbox(&mut self.family_preview, "Preview every style");
                 ui.separator();
                 ui.checkbox(&mut self.settings.fill, "Fill");
@@ -912,14 +958,15 @@ impl FoundryWindow {
                 }
             });
             ui.menu_button("Tools", |ui| {
-                if ui.radio(self.tool == Tool::Select, "Select   V").clicked() {
-                    self.tool = Tool::Select;
-                    ui.close();
-                }
-                if ui.radio(self.tool == Tool::Pen, "Pen   P").clicked() {
-                    self.tool = Tool::Pen;
-                    self.mode = Mode::Editor;
-                    ui.close();
+                for (tool, icon, label) in [
+                    (Tool::Select, "location-arrow", "Select   V"),
+                    (Tool::Pen, "pencil", "Pen   P"),
+                    (Tool::Rectangle, "square", "Rectangle   R"),
+                    (Tool::Oval, "circle", "Oval   O"),
+                ] {
+                    if self.icon_menu(ui, icon, label, self.tool == tool) {
+                        self.choose_tool(tool);
+                    }
                 }
             });
             ui.menu_button("Effects", |ui| {
@@ -954,45 +1001,74 @@ impl FoundryWindow {
 
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.mode, Mode::Overview, "Overview");
-            if ui
-                .add_enabled(
-                    self.current.is_some(),
-                    egui::Button::selectable(self.mode == Mode::Editor, "Editor"),
-                )
-                .clicked()
-            {
+            if self.icon_button(
+                ui,
+                "layout-cells",
+                "Overview",
+                self.mode == Mode::Overview,
+                true,
+                "Overview",
+            ) {
+                self.mode = Mode::Overview;
+            }
+            if self.icon_button(
+                ui,
+                "pencil-to-square",
+                "Editor",
+                self.mode == Mode::Editor,
+                self.current.is_some(),
+                "Editor",
+            ) {
                 self.mode = Mode::Editor;
             }
             ui.separator();
-            ui.selectable_value(&mut self.tool, Tool::Select, "Select")
-                .on_hover_text("V · drag points, drag empty space to box-select, Alt-click an outline to add a point");
-            if ui
-                .selectable_value(&mut self.tool, Tool::Pen, "Pen")
-                .on_hover_text("P · click to add corner points, Shift-click for off-curve, click the first point to close")
-                .clicked()
-            {
-                self.mode = Mode::Editor;
+            for (tool, icon, label, hover) in [
+                (
+                    Tool::Select,
+                    "location-arrow",
+                    "Select",
+                    "V · drag points, drag empty space to box-select, Alt-click an outline to add a point",
+                ),
+                (
+                    Tool::Pen,
+                    "pencil",
+                    "Pen",
+                    "P · click to add corner points, Shift-click for off-curve, click the first point to close",
+                ),
+                (
+                    Tool::Rectangle,
+                    "square",
+                    "Rectangle",
+                    "R · drag to add a closed rectangle",
+                ),
+                (
+                    Tool::Oval,
+                    "circle",
+                    "Oval",
+                    "O · drag to add a closed oval",
+                ),
+            ] {
+                if self.icon_button(ui, icon, label, self.tool == tool, true, hover) {
+                    self.choose_tool(tool);
+                }
             }
             ui.separator();
             let (undo, redo) = self.session.history();
-            if ui
-                .add_enabled(undo > 0, egui::Button::new("Undo"))
-                .clicked()
-            {
+            if self.icon_button(ui, "arrow-rotate-left", "Undo", false, undo > 0, "Undo") {
                 self.undo();
             }
-            if ui
-                .add_enabled(redo > 0, egui::Button::new("Redo"))
-                .clicked()
-            {
+            if self.icon_button(ui, "arrow-rotate-right", "Redo", false, redo > 0, "Redo") {
                 self.redo();
             }
             ui.separator();
-            if ui
-                .add_enabled(self.has_font(), egui::Button::new("Effects…"))
-                .clicked()
-            {
+            if self.icon_button(
+                ui,
+                "magic-wand",
+                "Effects",
+                false,
+                self.has_font(),
+                "Effects · Ctrl+E",
+            ) {
                 self.effects.open = true;
             }
             ui.separator();
@@ -1030,6 +1106,8 @@ impl FoundryWindow {
                 ui.weak(match self.tool {
                     Tool::Select => "Select",
                     Tool::Pen => "Pen",
+                    Tool::Rectangle => "Rectangle",
+                    Tool::Oval => "Oval",
                 });
             });
         });
@@ -1045,9 +1123,6 @@ impl FoundryWindow {
         // Check the shifted forms first, so Ctrl+Shift+S is not taken as Ctrl+S.
         if pressed(command_shift(Key::S)) && self.has_font() {
             self.save_as_dialog();
-        }
-        if pressed(command_shift(Key::Z)) {
-            self.redo();
         }
         if pressed(command_shift(Key::N)) && self.has_font() {
             self.dialogs.new_glyph = Some(NewGlyph {
@@ -1082,12 +1157,6 @@ impl FoundryWindow {
         if pressed(command(Key::S)) && self.has_font() {
             self.save();
         }
-        if pressed(command(Key::Z)) {
-            self.undo();
-        }
-        if pressed(command(Key::Y)) {
-            self.redo();
-        }
         if pressed(command(Key::Q)) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
@@ -1113,9 +1182,18 @@ impl FoundryWindow {
             self.view = None;
         }
 
-        // Plain keys only when no text field has focus.
+        // Text fields keep undo and the letter keys. Ctrl+S still saves while typing.
         if ctx.egui_wants_keyboard_input() {
             return;
+        }
+        if pressed(command_shift(Key::Z)) {
+            self.redo();
+        }
+        if pressed(command(Key::Z)) {
+            self.undo();
+        }
+        if pressed(command(Key::Y)) {
+            self.redo();
         }
         if pressed(command(Key::A)) {
             self.select_all_points();
@@ -1126,11 +1204,16 @@ impl FoundryWindow {
             self.dialogs.shortcuts = true;
         }
         if pressed(plain(Key::V)) {
-            self.tool = Tool::Select;
+            self.choose_tool(Tool::Select);
         }
         if pressed(plain(Key::P)) {
-            self.tool = Tool::Pen;
-            self.mode = Mode::Editor;
+            self.choose_tool(Tool::Pen);
+        }
+        if pressed(plain(Key::R)) {
+            self.choose_tool(Tool::Rectangle);
+        }
+        if pressed(plain(Key::O)) {
+            self.choose_tool(Tool::Oval);
         }
         if pressed(plain(Key::OpenBracket)) {
             self.step_glyph(-1);
@@ -1139,6 +1222,10 @@ impl FoundryWindow {
             self.step_glyph(1);
         }
         if pressed(plain(Key::Escape)) {
+            if matches!(self.drag, Drag::Shape { .. }) {
+                self.drag = Drag::None;
+                self.status = ("Cancelled the shape.".into(), Tone::Quiet);
+            }
             self.selection.clear();
             self.pen_contour = None;
         }
@@ -1298,7 +1385,7 @@ impl FoundryWindow {
             .is_some()
         {
             self.open_editor(name.clone());
-            self.tool = Tool::Pen;
+            self.choose_tool(Tool::Pen);
             self.status = (
                 format!("Added {name}. The pen is ready: click to place points."),
                 Tone::Done,
@@ -1347,8 +1434,10 @@ impl eframe::App for FoundryWindow {
         if self.settings.show_preview && self.has_font() {
             egui::Panel::bottom("preview")
                 .frame(bar)
-                .resizable(false)
-                .show(ui, |ui| self.preview_strip(ui));
+                .resizable(true)
+                .default_size(300.0)
+                .size_range(160.0..=520.0)
+                .show(ui, |ui| self.preview_pane(ui));
         }
         if self.settings.show_glyph_list && self.has_font() {
             egui::Panel::left("glyphs")
@@ -1383,6 +1472,7 @@ impl eframe::App for FoundryWindow {
             eframe::set_value(storage, LAST_DIR_KEY, &dir.to_string_lossy().into_owned());
         }
         eframe::set_value(storage, SETTINGS_KEY, &self.settings);
+        eframe::set_value(storage, COPY_KEY, &self.copy);
     }
 }
 
@@ -1432,6 +1522,10 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("Enter (overview)", "Edit the selected glyph"),
     ("[ and ]", "Previous / next glyph"),
     ("V / P", "Select tool / Pen tool"),
+    (
+        "R / O",
+        "Rectangle / Oval. Drag to add one. Esc cancels the drag",
+    ),
     ("Click, Shift+click", "Select a point, add to the selection"),
     ("Drag empty space", "Box select (Shift adds)"),
     ("Alt+click an outline", "Add a point on the segment"),

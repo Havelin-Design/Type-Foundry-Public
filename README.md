@@ -23,7 +23,7 @@ A `save` command whose path ends in `.ttf` writes an installable TrueType file f
 
 `foundry run` reads one JSON command per line. That stream is the plugin and AI surface. See `documents/api.md`.
 
-`typefoundry` is the drawing window. Open a JSON font, a UFO, a typeface JSON, or a web font, pick a glyph, and drag points. Each drag is a `move_point` command on the same session. See `Design/README.md`.
+`typefoundry` is the drawing window. Open a JSON font, a UFO, a typeface JSON, a web font, or a folder of SVG glyphs named `0041.svg`, pick a glyph, and edit points or drag a rectangle or an oval onto it. The preview pane sets headlines and paragraphs in the font. Every edit is a session command. See `Design/README.md`.
 
 `Fonts/Roboto-English.json` and `Fonts/Roboto-Cyrillic.json` are Roboto Regular cut to English (U+0020–U+007E) and Cyrillic (U+0400–U+04FF). The license is in `Fonts/NOTICE.md`.
 

@@ -58,6 +58,7 @@ impl FoundryWindow {
         match self.tool {
             Tool::Select => self.select_tool(ui, &response, &view, &outline, &name, shift, alt),
             Tool::Pen => self.pen_tool(&response, &view, &outline, &name, shift),
+            Tool::Rectangle | Tool::Oval => self.shape_tool(ui, &response, &view, &name),
         }
         self.view = Some(view);
 
@@ -84,6 +85,7 @@ impl FoundryWindow {
         {
             paint_stroke(&painter, &view, &ghost, Stroke::new(1.5, color(AMBER)));
         }
+        self.paint_shape_ghost(&painter, &view, rect);
         self.paint_handles(&painter, &view, &outline);
         self.paint_overlays(ui, &painter, &view, &outline, pointer, alt);
     }
@@ -199,7 +201,7 @@ impl FoundryWindow {
                     }
                 }
                 Drag::Marquee { now, .. } => *now = pt(pointer),
-                Drag::None => {}
+                Drag::Shape { .. } | Drag::None => {}
             }
         }
 
@@ -217,7 +219,7 @@ impl FoundryWindow {
                     self.selection.extend(picked);
                 }
                 Drag::Points { .. } => self.checkpoint(),
-                Drag::None => {}
+                Drag::Shape { .. } | Drag::None => {}
             }
         }
 
@@ -348,6 +350,108 @@ impl FoundryWindow {
                 "New contour. Click to add points, click the first point to close, Esc to stop."
                     .into(),
                 Tone::Quiet,
+            );
+        }
+    }
+
+    fn shape_tool(
+        &mut self,
+        ui: &egui::Ui,
+        response: &egui::Response,
+        view: &Viewport,
+        name: &str,
+    ) {
+        let primary = egui::PointerButton::Primary;
+        // A drag begins past egui's threshold, so the button-down position is the corner.
+        if response.drag_started_by(primary)
+            && let Some(press) = ui.input(|input| input.pointer.press_origin())
+        {
+            let at = self.snapped(view.to_font(pt(press)));
+            self.drag = Drag::Shape { start: at, now: at };
+            self.pen_contour = None;
+        }
+        if response.dragged_by(primary)
+            && let Some(pointer) = response.interact_pointer_pos()
+            && matches!(self.drag, Drag::Shape { .. })
+        {
+            let at = self.snapped(view.to_font(pt(pointer)));
+            if let Drag::Shape { now, .. } = &mut self.drag {
+                *now = at;
+            }
+        }
+        if response.drag_stopped_by(primary)
+            && let Drag::Shape { start, now } = std::mem::replace(&mut self.drag, Drag::None)
+        {
+            self.commit_shape(name, start, now);
+        }
+    }
+
+    fn commit_shape(&mut self, name: &str, start: Pt, now: Pt) {
+        let points = match self.tool {
+            Tool::Rectangle => crate::shapes::rectangle(start, now),
+            Tool::Oval => crate::shapes::oval(start, now),
+            Tool::Select | Tool::Pen => None,
+        };
+        let Some(points) = points else {
+            self.status = ("The shape needs a little room.".into(), Tone::Quiet);
+            return;
+        };
+        let label = match self.tool {
+            Tool::Rectangle => "rectangle",
+            Tool::Oval => "oval",
+            Tool::Select | Tool::Pen => "shape",
+        };
+        if let Some(data) = self.edit_json(
+            json!({
+                "op": "add_contour",
+                "name": name,
+                "contour": crate::shapes::contour_value(&points),
+            }),
+            Scope::Glyph(name.to_string()),
+        ) {
+            let contour = data["contour"].as_u64().unwrap_or(0) as usize;
+            self.selection = (0..points.len())
+                .map(|point| Handle { contour, point })
+                .collect();
+            self.pen_contour = None;
+            self.status = (format!("Added a {label}."), Tone::Done);
+        }
+    }
+
+    fn snapped(&self, point: Pt) -> Pt {
+        if self.settings.snap {
+            Pt::new(point.x.round(), point.y.round())
+        } else {
+            point
+        }
+    }
+
+    fn paint_shape_ghost(&self, painter: &egui::Painter, view: &Viewport, rect: Rect) {
+        let Drag::Shape { start, now } = self.drag else {
+            return;
+        };
+        let points = match self.tool {
+            Tool::Rectangle => crate::shapes::rectangle(start, now),
+            Tool::Oval => crate::shapes::oval(start, now),
+            Tool::Select | Tool::Pen => None,
+        };
+        if let Some(points) = points {
+            let ghost = crate::shapes::outline_of(&points);
+            paint_fill(
+                painter,
+                view,
+                rect,
+                &ghost,
+                color(AMBER).gamma_multiply(0.35),
+            );
+            paint_stroke(painter, view, &ghost, Stroke::new(1.5, color(AMBER)));
+        } else if start.x != now.x || start.y != now.y {
+            let area = Rect::from_two_pos(pos(view.to_screen(start)), pos(view.to_screen(now)));
+            painter.rect_stroke(
+                area,
+                CornerRadius::ZERO,
+                Stroke::new(1.0, color(AMBER)),
+                egui::StrokeKind::Inside,
             );
         }
     }
@@ -510,6 +614,9 @@ impl FoundryWindow {
                         Stroke::new(1.0, color(FOCUS)),
                     );
                 }
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+            }
+            Tool::Rectangle | Tool::Oval => {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
             }
             Tool::Select => {

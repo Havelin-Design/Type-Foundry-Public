@@ -14,7 +14,6 @@ pub struct Settings {
     pub coordinates: bool,
     pub snap: bool,
     pub cell_size: f32,
-    pub preview_size: f32,
     pub show_glyph_list: bool,
     pub show_inspector: bool,
     pub show_preview: bool,
@@ -31,7 +30,6 @@ impl Default for Settings {
             coordinates: true,
             snap: true,
             cell_size: 96.0,
-            preview_size: 56.0,
             show_glyph_list: true,
             show_inspector: true,
             show_preview: true,
@@ -58,8 +56,7 @@ impl Settings {
         ui.heading("Panels");
         ui.checkbox(&mut self.show_glyph_list, "Glyph list");
         ui.checkbox(&mut self.show_inspector, "Inspector");
-        ui.checkbox(&mut self.show_preview, "Preview strip");
-        ui.add(egui::Slider::new(&mut self.preview_size, 24.0..=160.0).text("Preview size"));
+        ui.checkbox(&mut self.show_preview, "Preview pane");
         ui.add_space(8.0);
         if ui.button("Reset to defaults").clicked() {
             *self = Self::default();

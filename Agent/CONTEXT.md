@@ -52,10 +52,13 @@ Frozen for now:
 
 ## Decisions
 
-- Rust owns the font. The `typefoundry` window is a client of `foundry-api`. A drag is a `move_point` command.
+- Rust owns the font. The `typefoundry` window is a client of `foundry-api`. A drag, a new rectangle, and a new oval are session commands.
 - The JSON command stream is the plugin and agent API. `foundry-mcp` wraps it for chat clients. It does not get its own font mutations.
 - Blend refuses incompatible outlines and reports why.
 - House UI uses the Havelin v2 system surface for chrome. The glyph canvas stays neutral: BONE ground, black fill, FOCUS / AMBER / SIGNAL handles.
+- A folder of filled SVG glyphs, each named with four hex digits (`0041.svg` is A), opens through `Font::load`. Tight crops are scaled so the flat x-height is 500 in a 1000-unit em and share one baseline.
+- Toolbar icons are the Gravity UI set (MIT, Yandex), vendored as SVG. The window draws them locally and does not fetch them.
+- The window, the executable, and the existing Start menu shortcut use Troy's mark at `App/crates/foundry-app/assets/type-foundry-icon.png`.
 - Cargo target directory stays on `C:`.
 
 ## Session log
@@ -69,6 +72,56 @@ Frozen for now:
 - Window: font tabs, New style dialog, Style section in the inspector, open, save, and export family, a family check report, a compare layer that draws another style behind the glyph, and a preview line per style.
 - Validation: fmt, tests, and clippy `-D warnings` passed in the Linux container. Xvfb smoke on Roboto English: made an Italic at 12 degrees, compared the Italic and Regular R, previewed both, the check came back ready, and switching tabs kept the glyph. `foundry run` exported Regular, Italic, and Bold Italic TTFs. `fc-scan` read all three as one family, Roboto Draft, with the right weights and slants.
 - Next: interpolating between styles, a weight axis with masters, and a variable-font export. Kerning stays later.
+
+### 2026-10-04 — Pushed the drawing slice
+
+- Focus: put the local slice on `main`.
+- Commit `168f996` (`168f996bc9caa9e56b53b3c7238f8a98b0b419c8`) is on `main`. It adds rectangle and oval, the preview pane, Gravity UI toolbar icons, SVG folder import, and the window mark. Pushed `dbca862..168f996` to `https://github.com/thavelin/Type-Foundry.git` `HEAD:main` over HTTPS. Origin stays the SSH remote. The tracking line may still say `origin/main` is gone. That was left alone.
+- Vostok outlines were not committed. The earlier session entries below still say "not pushed" because that was true when they were written.
+
+### 2026-10-04 — Window icon
+
+- Focus: use Troy's mark as the Type Foundry icon.
+- The source is `E:\random\Type-Foundry-Icon.png`, a 256×256 image. A copy lives at `App/crates/foundry-app/assets/type-foundry-icon.png`. The window decodes it for the title-bar icon. The Windows build embeds that PNG in an icon resource, so the executable and the Start menu shortcut use it too. The existing shortcut still points at the C: release exe. Its icon location is that exe.
+- Validation: `the_app_icon_is_the_square_mark` passed. The release exe contains the PNG, opened with the title `Type Foundry`, and was closed. The glyph view was not clicked.
+- Not pushed.
+
+### Correction - Window icon validation
+
+- The full Windows check later passed: 73 tests (6 api, 12 app lib, 10 app bin, 1 cli, 38 core, 6 mcp), 1 ignored regen test, clippy clean. `the_app_icon_is_the_square_mark` is one of the 10 app-bin tests. The release exe that contains the PNG was linked before a one-line clippy change in `app_icon` (`as_chunks`). The icon pixels are the same, and that exe was not rebuilt after the line. Not pushed.
+
+### 2026-10-04 — SVG folder to a font
+
+- Focus: open Troy's first font, `T:\troy-freeform\Fonts\Vostok-Serif\SVG`, and line the letters up.
+- `Font::load` reads a folder of filled SVGs. The file name is four hex digits (`0041.svg`, also `U+0041.svg` or `uni0041.svg`). A folder named `SVG` takes the parent name, so this one opens as Vostok Serif. Strokes that were not expanded to fills are refused. `usvg` 0.45 parses the paths with text features off.
+- The 90 Vostok files are tight crops at one scale. Flat letters sit on y = 0. Round letters split their extra height as overshoot. `p`, `q`, and `g` hang from the round x-height; `y` hangs from the flat x-height; `j` shares the descender. The flat x-height becomes 500 units at 1000 UPM. Cap height, ascender, and descender are measured from the aligned ink. Each crop gets 40 units of sidebearing on both sides. A space is added at 250 because the folder has no `0020.svg`.
+- File > Open SVG folder… picks the directory. `foundry info` accepts the same path.
+- Validation: the Windows check passed. 72 tests (6 api, 21 app, 1 cli, 38 core, 6 mcp), 1 ignored regen test, clippy clean. The Vostok folder itself is one of those tests: 91 glyphs, x and H on the baseline, o overshoots, p descends, the period sits on the baseline, the comma hangs. The release window opened that folder, the process title was `Vostok Serif - Type Foundry`, and the process was closed. The glyphs were not clicked.
+- Not pushed. The rectangle, oval, preview pane, and Gravity UI icons are in the same local tree. `main` is still `dbca862`.
+- Deferred: kerning, a real space drawing, optical sidebearings per letter, and components. Generation stays frozen.
+- Next: Troy looks at Vostok Serif in the window. Push waits until he asks.
+
+### 2026-10-04 — Gravity UI toolbar icons
+
+- Focus: replace the text-only toolbar and Tools menu with Gravity UI icons, kept beside the names.
+- Nine SVGs from the Gravity UI set (MIT, Copyright (c) 2022 YANDEX LLC) live in `App/crates/foundry-app/icons`, with `LICENSE` beside them. `foundry-app` rasterizes them with `resvg` 0.45 (`default-features = false`). `currentColor` becomes white, then egui tints the icon with the chrome text color. The window does not fetch icons.
+- Mapping: Overview `layout-cells`, Editor `pencil-to-square`, Select `location-arrow`, Pen `pencil`, Rectangle `square`, Oval `circle`, Undo `arrow-rotate-left`, Redo `arrow-rotate-right`, Effects `magic-wand`. Hover text still carries the shortcut sentence. The Tools menu uses the same four tool icons.
+- Validation: the Windows check passed. 65 tests (6 api, 21 app, 1 cli, 31 core, 6 mcp), 1 ignored regen test, clippy clean. `icons::tests::every_toolbar_icon_rasterizes` passed. The release `typefoundry.exe` opened `Fonts/Roboto-English.json`, the process title was `Roboto English - Type Foundry`, and the process was closed. The icon buttons were not clicked. The Start menu shortcut was left alone.
+- Not pushed. This sits on the same unpushed tree as the rectangle, oval, and preview pane. `main` is still `dbca862`. MCP is still the original 9 tools.
+- Deferred: icon-only buttons, icons on the rest of the menus, and the other 790 Gravity UI icons. MCP edit commands, a collection face index, components, kerning, WOFF2, OTF export. Generation stays frozen.
+- Next: Troy tries the toolbar. Push waits until he asks.
+
+### 2026-10-04 — Rectangle, oval, and the preview pane
+
+- Focus: glyph creation tools, and a preview that can hold headlines and paragraphs.
+- Rectangle (R) and Oval (O) drag onto the current glyph. Each drag is one `add_contour`, so one undo. The box is normalized. A side shorter than 4 units is refused. On-curve rectangle corners are not smooth. The oval is four cubic quadrants (kappa 0.5522847498307936), 12 points, closed, first point at the right. An amber ghost follows the drag. Esc cancels it. The new points are selected.
+- The bottom strip is now a resizable preview pane (`preview.rs`). The copy column is headline and paragraph blocks (add, remove, retype, switch role). The format sheet sets headlines at 48px and paragraphs at 15px, then a size waterfall of the first headline at 36, 24, 16, and 11. Lines wrap in `lay_text`. Missing characters stay a hollow box. Click a glyph in the sheet to select it. The copy persists under the eframe key `preview_copy`.
+- While a text field is focused, Ctrl+Z stays with that field. Font undo still uses Ctrl+Z when nothing is being typed.
+- `foundry-app/src/lib.rs` no longer claims the window writes only with `move_point`.
+- Validation: the Windows check passed. 64 tests (6 api, 20 app, 1 cli, 31 core, 6 mcp), 1 ignored regen test, clippy clean. The release `typefoundry.exe` opened `Fonts/Roboto-English.json`, the title became `Roboto English — Type Foundry`, and the process was closed. Rectangle, oval, and the sheet were not clicked in the window. Their geometry and wrapping are covered by the new unit tests.
+- Not pushed. The Start menu shortcut was left alone. MCP is still the original 9 tools.
+- Deferred: MCP coverage of the edit commands, a collection face index, components, kerning, WOFF2, OTF export. Generation stays frozen.
+- Next: Troy tries the new tools and the pane. More drawing tools wait on what he asks for.
 
 ### 2026-10-04 — Windows check of the editor
 
