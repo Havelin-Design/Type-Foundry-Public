@@ -71,6 +71,12 @@ impl FoundryWindow {
         if self.settings.fill {
             paint_fill(&painter, &view, rect, &outline, Color32::BLACK);
         }
+        // Another style of the family, drawn over the fill so it shows on ink and paper alike.
+        if let (Some(id), Some(name)) = (self.compare, self.current.clone())
+            && let Some(other) = self.outline_in(id, &name)
+        {
+            paint_stroke(&painter, &view, &other, Stroke::new(1.5, color(MUTED)));
+        }
         if self.settings.outline || !self.settings.fill {
             paint_stroke(&painter, &view, &outline, Stroke::new(1.25, Color32::BLACK));
         }

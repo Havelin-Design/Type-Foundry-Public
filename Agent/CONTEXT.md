@@ -63,6 +63,16 @@ Frozen for now:
 
 ## Session log
 
+### 2026-10-05 — Several fonts and families (cloud)
+
+- Focus: edit a Regular and an Italic side by side and ship them as one family. Branch `claude/font-families`.
+- Model: every font has a `style` (family, style name, weight, italic, italic angle). Files without it load as the Regular of a family named after the font. TrueType, OpenType, and UFO import read it. TrueType and UFO export write it with proper style linking: name IDs 1, 2, 16, and 17, OS/2 weight and `fsSelection`, `head.macStyle`, `post.italicAngle`, and the `hhea` caret slope.
+- Session: holds many open fonts, each with its own undo history and unsaved-changes flag. Existing commands act on the active font. New commands: `fonts`, `select_font`, `close_font`, `set_style`, `derive_style` (with an optional slant), `family_check`, `save_family` and `open_family` (a `typefoundry.family` file beside `Family-Style.json` members), and `export_family` (TTF, UFO, or JSON, refused on blocking issues). `glyph` and `index` take an optional `font`.
+- MCP: 9 more tools for those commands. `font_save` with no path now remembers a path per font, so a derived style can never overwrite another style's file.
+- Window: font tabs, New style dialog, Style section in the inspector, open, save, and export family, a family check report, a compare layer that draws another style behind the glyph, and a preview line per style.
+- Validation: fmt, tests, and clippy `-D warnings` passed in the Linux container. Xvfb smoke on Roboto English: made an Italic at 12 degrees, compared the Italic and Regular R, previewed both, the check came back ready, and switching tabs kept the glyph. `foundry run` exported Regular, Italic, and Bold Italic TTFs. `fc-scan` read all three as one family, Roboto Draft, with the right weights and slants.
+- Next: interpolating between styles, a weight axis with masters, and a variable-font export. Kerning stays later.
+
 ### 2026-10-04 — Pushed the drawing slice
 
 - Focus: put the local slice on `main`.

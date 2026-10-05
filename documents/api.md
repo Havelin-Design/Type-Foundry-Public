@@ -125,6 +125,52 @@ Every edit above, plus `put_glyph`, `set_advance`, and `move_point`, can be undo
 {"op":"blend","a":"narrow.json","b":"wide.json","t":0.5,"out":"mid.json"}
 ```
 
+## Several fonts and families
+
+A session can hold many open fonts. `create`, `open`, `blend`, `derive_style`, and `open_family` each add a font and make it active. Every other command acts on the active font, so a script that opens one font works as before. Each font keeps its own undo history and its own unsaved-changes flag. `create`, `open`, and `info` return the font's `id`.
+
+```json
+{"op":"fonts"}
+{"op":"select_font","id":2}
+{"op":"close_font"}
+{"op":"close_font","id":3}
+{"op":"glyph","name":"R","font":1}
+{"op":"index","font":1}
+```
+
+`fonts` lists `id`, `name`, `family`, `style`, `weight`, `italic`, glyph count, `active`, and `dirty` for each open font. `close_font` closes the active font, or `id`, and the next one becomes active. Unsaved changes are lost. `glyph` and `index` can read any open font with `font`.
+
+### Styles
+
+Every font has a style: a family name, a style name, a weight from 1 to 1000 (400 is Regular, 700 is Bold), an italic flag, and an italic angle in degrees counter-clockwise, so a right-leaning italic is negative, such as -12. A file saved before styles existed opens as the Regular of a family named after the font.
+
+```json
+{"op":"set_style","family":"Wide","style":"Bold","weight":700}
+{"op":"set_style","italic":true,"italic_angle":-12}
+{"op":"derive_style","style":"Italic","slant":12}
+{"op":"derive_style","style":"Bold","weight":700}
+```
+
+`set_style` can be undone. Changing the family or style name renames the font to `Family Style`. `derive_style` copies the active font as a new style of the same family and opens the copy. A nonzero `slant` leans every glyph that many degrees about the baseline, sets `italic`, and sets the italic angle to match. It is a starting point for drawing a real italic.
+
+### Families
+
+A family is every open font that shares the active font's family name. The family commands work on that set, in the order the fonts were opened, or on `ids` when given.
+
+```json
+{"op":"family_check"}
+{"op":"save_family","path":"C:/fonts/Wide/Wide.family.json"}
+{"op":"open_family","path":"C:/fonts/Wide/Wide.family.json"}
+{"op":"export_family","dir":"C:/fonts/Wide/ttf","format":"ttf"}
+```
+
+- `family_check` reports `issues` and whether the family is `ready`. Blocking issues are styles with different family names, or two styles that would export to the same file name. Notes cover two styles with the same weight and italic, different units per em, different ascender or descender, italic with an angle of 0, glyphs missing from some styles, and glyphs whose Unicode differs between styles.
+- `save_family` writes each style as `Family-Style.json` beside the family file, then the family file itself: `format` `typefoundry.family`, `version` 1, `family`, and `styles`, a list of file names relative to the family file.
+- `open_family` opens every style the family file lists. A style may be any format `open` reads.
+- `export_family` writes each style into `dir` as `Family-Style.ttf`, `.ufo`, or `.json`. It refuses before writing anything when the check finds a blocking issue.
+
+Exports carry the style so apps group the files as one family. In TrueType, name IDs 16 and 17 hold the family and style, and IDs 1 and 2 hold the four-style grouping older apps use: Regular, Italic, Bold, and Bold Italic share the family name, and any other weight becomes its own legacy family, such as `Wide Light`. OS/2 has the weight class and the italic, bold, and regular bits, `head` has the matching style bits, `post` has the italic angle, and `hhea` slopes the caret. UFO export writes `familyName`, `styleName`, `styleMapFamilyName`, `styleMapStyleName`, `openTypeOS2WeightClass`, and `italicAngle`. TrueType, OpenType, and UFO imports read the same fields back.
+
 ## Project file
 
 `format` is `typefoundry.font` and `version` is `1`. Points are `on` or `off`. A cubic segment is two `off` points between `on` points. A quadratic segment is one `off` point. Contours are closed or open.
@@ -165,10 +211,19 @@ Stdout carries only protocol messages, one JSON-RPC object per line. Logs go to 
 | `point_move` | `name`, `contour`, `point`, `x`, `y` | `move_point` |
 | `font_check` | `a`, `b` | `check` |
 | `font_blend` | `a`, `b`, `t?`, `out` | `blend` |
+| `font_list` | none | `fonts` |
+| `font_select` | `id` | `select_font` |
+| `font_close` | `id?` | `close_font` |
+| `style_set` | `family?`, `style?`, `weight?`, `italic?`, `italic_angle?` | `set_style` |
+| `style_derive` | `style`, `weight?`, `italic?`, `slant?` | `derive_style` |
+| `family_check` | none | `family_check` |
+| `family_open` | `path` | `open_family` |
+| `family_save` | `path` | `save_family` |
+| `family_export` | `dir`, `format` | `export_family` |
 
 A tool result is `{"content":[{"type":"text","text":"..."}],"isError":false}`. The text is the command response JSON. `isError` is true when the command response has `ok: false`, or when the arguments do not fit the tool.
 
-`font_save` takes the same paths as `save`, including `.ttf`. Without a `path` it saves to the last path this server process opened, saved, or blended to. `font_create` clears that path, so a new font needs one explicit `path` the first time. The path lives in the MCP wrapper, not in the session.
+`font_save` takes the same paths as `save`, including `.ttf`. Without a `path` it saves the active font to the last path that font was opened from, saved to, or blended to. A new or derived style has no path until it is saved once. The paths live in the MCP wrapper, not in the session.
 
 Claude Desktop (`claude_desktop_config.json`) or Cursor (`.cursor/mcp.json`):
 

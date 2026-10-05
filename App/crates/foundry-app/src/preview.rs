@@ -257,7 +257,7 @@ impl FoundryWindow {
                         Role::Paragraph => ("Paragraph · 15", PARAGRAPH_PX),
                     };
                     ui.weak(label);
-                    let hit = self.paint_sample(ui, &block.text, size);
+                    let hit = self.paint_sample(ui, None, &block.text, size);
                     if clicked.is_none() {
                         clicked = hit;
                     }
@@ -267,14 +267,41 @@ impl FoundryWindow {
                 ui.weak("Sizes");
                 for size in WATERFALL {
                     ui.weak(format!("{size:.0}"));
-                    let hit = self.paint_sample(ui, &sample, size);
+                    let hit = self.paint_sample(ui, None, &sample, size);
                     if clicked.is_none() {
                         clicked = hit;
                     }
                     ui.add_space(6.0);
                 }
+                // View > Preview every style: the sample once per style of this family.
+                if self.family_preview {
+                    let family = self
+                        .session
+                        .font()
+                        .map(|font| font.style.family.clone())
+                        .unwrap_or_default();
+                    let styles: Vec<(u32, String)> = self
+                        .tabs
+                        .iter()
+                        .filter(|tab| tab.family == family)
+                        .map(|tab| (tab.id, tab.style.clone()))
+                        .collect();
+                    ui.separator();
+                    ui.weak("Styles");
+                    for (id, style) in styles {
+                        ui.weak(style);
+                        let hit = self.paint_sample(ui, Some(id), &sample, HEADLINE_PX);
+                        if clicked.is_none() {
+                            clicked = hit;
+                        }
+                        ui.add_space(6.0);
+                    }
+                }
             });
-        if let Some(name) = clicked {
+        if let Some((font, name)) = clicked {
+            if let Some(id) = font {
+                self.switch_to(id);
+            }
             self.select_glyph(Some(name));
             if self.mode == Mode::Editor {
                 self.view = None;
@@ -282,13 +309,21 @@ impl FoundryWindow {
         }
     }
 
-    /// Draw one wrapped sample on a bone card. Returns the glyph under a click.
-    fn paint_sample(&mut self, ui: &mut egui::Ui, text: &str, pixel_size: f32) -> Option<String> {
+    /// Draw one wrapped sample on a bone card, in the active font or the open font `font`.
+    /// Returns the font and glyph under a click.
+    fn paint_sample(
+        &mut self,
+        ui: &mut egui::Ui,
+        font: Option<u32>,
+        text: &str,
+        pixel_size: f32,
+    ) -> Option<(Option<u32>, String)> {
+        let id = font.or(self.active)?;
         let span = (self.ascender - self.descender).abs().max(1.0);
         let scale = f64::from(pixel_size) / span;
         let width = ui.available_width().max(8.0);
         let measure = (f64::from(width) - 16.0).max(1.0) / scale;
-        let lines = lay_text(text, measure, |ch| self.glyph_advance(ch));
+        let lines = lay_text(text, measure, |ch| self.glyph_advance(id, ch));
         let line_gap = span * scale * 1.3;
         let height = (8.0 + line_gap * lines.len() as f64) as f32;
         let (rect, response) = ui.allocate_exact_size(
@@ -321,14 +356,14 @@ impl FoundryWindow {
                         egui::StrokeKind::Inside,
                     );
                 } else if let Some(name) = &placed.name
-                    && let Some(outline) = self.outline(name)
+                    && let Some(outline) = self.outline_in(id, name)
                 {
                     let view = Viewport {
                         scale,
                         origin: Pt::new(x, baseline),
                     };
                     paint_fill(&painter, &view, rect, &outline, Color32::BLACK);
-                    if self.current.as_deref() == Some(name.as_str()) {
+                    if Some(id) == self.active && self.current.as_deref() == Some(name.as_str()) {
                         let y = (baseline - self.descender * scale * 0.35) as f32;
                         painter.hline(
                             (x as f32)..=((x + advance) as f32),
@@ -346,7 +381,7 @@ impl FoundryWindow {
                     let top = baseline - self.ascender * scale;
                     let bottom = baseline - self.descender * scale;
                     if f64::from(press.y) >= top && f64::from(press.y) < bottom {
-                        clicked = Some(name.clone());
+                        clicked = Some((font, name.clone()));
                     }
                 }
                 x += advance;
@@ -356,13 +391,13 @@ impl FoundryWindow {
         clicked
     }
 
-    fn glyph_advance(&mut self, ch: char) -> (Option<String>, f64) {
+    fn glyph_advance(&mut self, font: u32, ch: char) -> (Option<String>, f64) {
         let missing = (self.ascender - self.descender).abs().max(1.0) * 0.5;
         let Some(name) = self.by_unicode.get(&u32::from(ch)).cloned() else {
             return (None, missing);
         };
         let advance = self
-            .outline(&name)
+            .outline_in(font, &name)
             .map(|outline| outline.advance)
             .unwrap_or(missing);
         (Some(name), advance.max(0.0))

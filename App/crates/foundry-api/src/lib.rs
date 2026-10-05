@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use foundry_core::{
-    Anchor, Contour, Font, FoundryError, Glyph, Matrix, MetricsUpdate, PointKind, blend_fonts,
-    compatibility,
+    Anchor, Contour, ExportFormat, Font, FoundryError, Glyph, Matrix, MetricsUpdate, PointKind,
+    StyleUpdate, blend_fonts, check_family, compatibility, export_family, load_family, save_family,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -27,6 +27,9 @@ pub enum Command {
     Glyphs,
     Glyph {
         name: String,
+        /// Read from this open font instead of the active one.
+        #[serde(default)]
+        font: Option<u32>,
     },
     PutGlyph {
         glyph: Glyph,
@@ -131,7 +134,57 @@ pub enum Command {
         #[serde(default)]
         names: Option<Vec<String>>,
     },
-    Index,
+    Index {
+        #[serde(default)]
+        font: Option<u32>,
+    },
+    Fonts,
+    SelectFont {
+        id: u32,
+    },
+    CloseFont {
+        #[serde(default)]
+        id: Option<u32>,
+    },
+    SetStyle {
+        #[serde(default)]
+        family: Option<String>,
+        #[serde(default)]
+        style: Option<String>,
+        #[serde(default)]
+        weight: Option<u16>,
+        #[serde(default)]
+        italic: Option<bool>,
+        #[serde(default)]
+        italic_angle: Option<f64>,
+    },
+    DeriveStyle {
+        style: String,
+        #[serde(default)]
+        weight: Option<u16>,
+        #[serde(default)]
+        italic: Option<bool>,
+        #[serde(default)]
+        slant: f64,
+    },
+    OpenFamily {
+        path: String,
+    },
+    SaveFamily {
+        path: String,
+        #[serde(default)]
+        ids: Option<Vec<u32>>,
+    },
+    ExportFamily {
+        dir: String,
+        format: ExportFormat,
+        #[serde(default)]
+        ids: Option<Vec<u32>>,
+    },
+    FamilyCheck {
+        #[serde(default)]
+        ids: Option<Vec<u32>>,
+    },
     Undo,
     Redo,
     Checkpoint,
@@ -187,6 +240,7 @@ impl Command {
                 | Self::SetMetrics { .. }
                 | Self::Transform { .. }
                 | Self::RoundCoordinates { .. }
+                | Self::SetStyle { .. }
         )
     }
 
@@ -208,6 +262,7 @@ impl Command {
             }
             Self::SetAdvance { name, .. } => Some(format!("advance:{name}")),
             Self::SetMetrics { .. } => Some("metrics".to_string()),
+            Self::SetStyle { .. } => Some("style".to_string()),
             _ => None,
         }
     }
@@ -259,12 +314,24 @@ impl From<FoundryError> for Fail {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct Session {
-    font: Option<Font>,
+/// One open font with its own undo history.
+#[derive(Debug)]
+struct Doc {
+    id: u32,
+    font: Font,
     undo: Vec<Font>,
     redo: Vec<Font>,
     last_edit: Option<String>,
+    dirty: bool,
+}
+
+/// Open fonts and the active one. Editing commands act on the active font; `select_font`
+/// switches it. Each font keeps its own undo history.
+#[derive(Debug, Default)]
+pub struct Session {
+    docs: Vec<Doc>,
+    active: Option<u32>,
+    next_id: u32,
 }
 
 impl Session {
@@ -272,43 +339,123 @@ impl Session {
         Self::default()
     }
 
+    /// The active font.
     pub fn font(&self) -> Option<&Font> {
-        self.font.as_ref()
+        self.doc().map(|doc| &doc.font)
     }
 
-    /// Undo and redo steps available.
+    /// The active font's id.
+    pub fn active(&self) -> Option<u32> {
+        self.active
+    }
+
+    /// Undo and redo steps available on the active font.
     pub fn history(&self) -> (usize, usize) {
-        (self.undo.len(), self.redo.len())
+        self.doc()
+            .map_or((0, 0), |doc| (doc.undo.len(), doc.redo.len()))
+    }
+
+    fn doc(&self) -> Option<&Doc> {
+        let id = self.active?;
+        self.docs.iter().find(|doc| doc.id == id)
+    }
+
+    fn doc_mut(&mut self) -> Option<&mut Doc> {
+        let id = self.active?;
+        self.docs.iter_mut().find(|doc| doc.id == id)
+    }
+
+    fn font_mut(&mut self) -> Option<&mut Font> {
+        self.doc_mut().map(|doc| &mut doc.font)
+    }
+
+    fn font_by(&self, id: Option<u32>) -> Result<&Font, FoundryError> {
+        match id {
+            None => self.font().ok_or(FoundryError::NoFont),
+            Some(id) => self
+                .docs
+                .iter()
+                .find(|doc| doc.id == id)
+                .map(|doc| &doc.font)
+                .ok_or_else(|| FoundryError::Family(format!("no open font has id {id}"))),
+        }
+    }
+
+    /// Open a font beside the others and make it active. Returns its id.
+    fn add_font(&mut self, font: Font, dirty: bool) -> u32 {
+        self.next_id += 1;
+        let id = self.next_id;
+        self.docs.push(Doc {
+            id,
+            font,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            last_edit: None,
+            dirty,
+        });
+        self.active = Some(id);
+        id
+    }
+
+    /// The fonts a family command works on: the listed ids in that order, or every open font
+    /// in the active font's family, in the order they were opened.
+    fn family_members(&self, ids: Option<&[u32]>) -> Result<Vec<&Font>, FoundryError> {
+        match ids {
+            Some(ids) => ids.iter().map(|id| self.font_by(Some(*id))).collect(),
+            None => {
+                let family = &self.font().ok_or(FoundryError::NoFont)?.style.family;
+                Ok(self
+                    .docs
+                    .iter()
+                    .filter(|doc| &doc.font.style.family == family)
+                    .map(|doc| &doc.font)
+                    .collect())
+            }
+        }
+    }
+
+    fn font_list(&self) -> Value {
+        let fonts: Vec<Value> = self
+            .docs
+            .iter()
+            .map(|doc| {
+                json!({
+                    "id": doc.id,
+                    "name": doc.font.name,
+                    "family": doc.font.style.family,
+                    "style": doc.font.style.name,
+                    "weight": doc.font.style.weight,
+                    "italic": doc.font.style.italic,
+                    "glyphs": doc.font.glyphs.len(),
+                    "active": Some(doc.id) == self.active,
+                    "dirty": doc.dirty,
+                })
+            })
+            .collect();
+        json!({ "fonts": fonts, "active": self.active })
     }
 
     pub fn execute(&mut self, command: Command) -> Response {
         let edit = command.is_edit();
         let key = command.coalesce_key();
-        let replaces = matches!(
-            command,
-            Command::Create { .. } | Command::Open { .. } | Command::Blend { .. }
-        );
-        let before = if edit && (key.is_none() || key != self.last_edit) {
-            self.font.clone()
-        } else {
-            None
+        let before = match self.doc() {
+            Some(doc) if edit && (key.is_none() || key != doc.last_edit) => Some(doc.font.clone()),
+            _ => None,
         };
         let result = self.dispatch(command);
-        if result.is_ok() {
-            if edit {
-                if let Some(snapshot) = before {
-                    self.undo.push(snapshot);
-                    if self.undo.len() > UNDO_LIMIT {
-                        self.undo.remove(0);
-                    }
+        if result.is_ok()
+            && edit
+            && let Some(doc) = self.doc_mut()
+        {
+            if let Some(snapshot) = before {
+                doc.undo.push(snapshot);
+                if doc.undo.len() > UNDO_LIMIT {
+                    doc.undo.remove(0);
                 }
-                self.redo.clear();
-                self.last_edit = key;
-            } else if replaces {
-                self.undo.clear();
-                self.redo.clear();
-                self.last_edit = None;
             }
+            doc.redo.clear();
+            doc.last_edit = key;
+            doc.dirty = true;
         }
         match result {
             Ok(data) => Response::done(data),
@@ -338,31 +485,33 @@ impl Session {
         match command {
             Command::Create { name, upm } => {
                 let font = Font::new(name, upm)?;
-                let data = summary(&font);
-                self.font = Some(font);
-                Ok(Some(data))
+                let id = self.add_font(font, true);
+                Ok(Some(self.summary(id)))
             }
             Command::Open { path } => {
                 let font = Font::load(Path::new(&path))?;
-                let data = summary(&font);
-                self.font = Some(font);
-                Ok(Some(data))
+                let id = self.add_font(font, false);
+                Ok(Some(self.summary(id)))
             }
             Command::Save { path } => {
-                let font = self.font.as_ref().ok_or(FoundryError::NoFont)?;
+                let font = self.font().ok_or(FoundryError::NoFont)?;
                 font.save(Path::new(&path))?;
+                if let Some(doc) = self.doc_mut() {
+                    doc.dirty = false;
+                }
                 Ok(Some(json!({ "path": path })))
             }
-            Command::Info => Ok(Some(summary(
-                self.font.as_ref().ok_or(FoundryError::NoFont)?,
-            ))),
+            Command::Info => {
+                let id = self.active.ok_or(FoundryError::NoFont)?;
+                Ok(Some(self.summary(id)))
+            }
             Command::Glyphs => {
-                let font = self.font.as_ref().ok_or(FoundryError::NoFont)?;
+                let font = self.font().ok_or(FoundryError::NoFont)?;
                 let names: Vec<&str> = font.glyph_names();
                 Ok(Some(json!({ "glyphs": names })))
             }
-            Command::Glyph { name } => {
-                let font = self.font.as_ref().ok_or(FoundryError::NoFont)?;
+            Command::Glyph { name, font } => {
+                let font = self.font_by(font)?;
                 let glyph = font.glyph(&name).ok_or(FoundryError::MissingGlyph(name))?;
                 Ok(Some(
                     serde_json::to_value(glyph)
@@ -371,7 +520,7 @@ impl Session {
             }
             Command::PutGlyph { glyph } => {
                 let name = glyph.name.clone();
-                let font = self.font.as_mut().ok_or(FoundryError::NoFont)?;
+                let font = self.font_mut().ok_or(FoundryError::NoFont)?;
                 font.insert_glyph(glyph)?;
                 Ok(Some(json!({ "name": name })))
             }
@@ -379,7 +528,7 @@ impl Session {
                 if !advance.is_finite() {
                     return Err(FoundryError::NonFinite.into());
                 }
-                let font = self.font.as_mut().ok_or(FoundryError::NoFont)?;
+                let font = self.font_mut().ok_or(FoundryError::NoFont)?;
                 let glyph = font
                     .glyph_mut(&name)
                     .ok_or_else(|| FoundryError::MissingGlyph(name.clone()))?;
@@ -393,7 +542,7 @@ impl Session {
                 x,
                 y,
             } => {
-                let font = self.font.as_mut().ok_or(FoundryError::NoFont)?;
+                let font = self.font_mut().ok_or(FoundryError::NoFont)?;
                 font.move_point(&name, contour, point, x, y)?;
                 Ok(Some(json!({
                     "name": name,
@@ -409,7 +558,7 @@ impl Session {
                 dx,
                 dy,
             } => {
-                let font = self.font.as_mut().ok_or(FoundryError::NoFont)?;
+                let font = self.font_mut().ok_or(FoundryError::NoFont)?;
                 font.move_points(&name, &refs(&points), dx, dy)?;
                 Ok(Some(
                     json!({ "name": name, "points": points, "dx": dx, "dy": dy }),
@@ -424,7 +573,7 @@ impl Session {
                 kind,
                 smooth,
             } => {
-                let font = self.font.as_mut().ok_or(FoundryError::NoFont)?;
+                let font = self.font_mut().ok_or(FoundryError::NoFont)?;
                 let point = foundry_core::Point { x, y, kind, smooth };
                 font.insert_point(&name, contour, index, point)?;
                 Ok(Some(
@@ -437,14 +586,14 @@ impl Session {
                 point,
                 t,
             } => {
-                let font = self.font.as_mut().ok_or(FoundryError::NoFont)?;
+                let font = self.font_mut().ok_or(FoundryError::NoFont)?;
                 let index = font.split_segment(&name, contour, point, t)?;
                 Ok(Some(
                     json!({ "name": name, "contour": contour, "point": index }),
                 ))
             }
             Command::DeletePoints { name, points } => {
-                let font = self.font.as_mut().ok_or(FoundryError::NoFont)?;
+                let font = self.font_mut().ok_or(FoundryError::NoFont)?;
                 font.delete_points(&name, &refs(&points))?;
                 Ok(Some(json!({ "name": name, "deleted": points.len() })))
             }
@@ -455,7 +604,7 @@ impl Session {
                 kind,
                 smooth,
             } => {
-                let font = self.font.as_mut().ok_or(FoundryError::NoFont)?;
+                let font = self.font_mut().ok_or(FoundryError::NoFont)?;
                 font.set_point_type(&name, contour, point, kind, smooth)?;
                 let glyph = font
                     .glyph(&name)
@@ -467,7 +616,7 @@ impl Session {
                 })))
             }
             Command::AddContour { name, contour } => {
-                let font = self.font.as_mut().ok_or(FoundryError::NoFont)?;
+                let font = self.font_mut().ok_or(FoundryError::NoFont)?;
                 let index = font.add_contour(&name, contour)?;
                 Ok(Some(json!({ "name": name, "contour": index })))
             }
@@ -476,36 +625,37 @@ impl Session {
                 contour,
                 closed,
             } => {
-                let font = self.font.as_mut().ok_or(FoundryError::NoFont)?;
+                let font = self.font_mut().ok_or(FoundryError::NoFont)?;
                 font.set_closed(&name, contour, closed)?;
                 Ok(Some(
                     json!({ "name": name, "contour": contour, "closed": closed }),
                 ))
             }
             Command::ReverseContour { name, contour } => {
-                let font = self.font.as_mut().ok_or(FoundryError::NoFont)?;
+                let font = self.font_mut().ok_or(FoundryError::NoFont)?;
                 font.reverse_contour(&name, contour)?;
                 Ok(Some(json!({ "name": name, "contour": contour })))
             }
             Command::DeleteGlyph { name } => {
-                let font = self.font.as_mut().ok_or(FoundryError::NoFont)?;
+                let font = self.font_mut().ok_or(FoundryError::NoFont)?;
                 font.delete_glyph(&name)?;
                 Ok(Some(json!({ "name": name })))
             }
             Command::RenameGlyph { name, new_name } => {
-                let font = self.font.as_mut().ok_or(FoundryError::NoFont)?;
+                let font = self.font_mut().ok_or(FoundryError::NoFont)?;
                 font.rename_glyph(&name, &new_name)?;
                 Ok(Some(json!({ "name": new_name, "was": name })))
             }
             Command::SetUnicode { name, unicode } => {
-                let font = self.font.as_mut().ok_or(FoundryError::NoFont)?;
+                let font = self.font_mut().ok_or(FoundryError::NoFont)?;
                 font.set_unicode(&name, unicode)?;
                 Ok(Some(json!({ "name": name, "unicode": unicode })))
             }
             Command::RenameFont { name } => {
-                let font = self.font.as_mut().ok_or(FoundryError::NoFont)?;
+                let font = self.font_mut().ok_or(FoundryError::NoFont)?;
                 font.rename(&name)?;
-                Ok(Some(summary(font)))
+                let id = self.active.ok_or(FoundryError::NoFont)?;
+                Ok(Some(self.summary(id)))
             }
             Command::SetMetrics {
                 ascender,
@@ -513,7 +663,7 @@ impl Session {
                 cap_height,
                 x_height,
             } => {
-                let font = self.font.as_mut().ok_or(FoundryError::NoFont)?;
+                let font = self.font_mut().ok_or(FoundryError::NoFont)?;
                 font.set_metrics(MetricsUpdate {
                     ascender,
                     descender,
@@ -529,7 +679,7 @@ impl Session {
                 advance,
                 anchor,
             } => {
-                let font = self.font.as_mut().ok_or(FoundryError::NoFont)?;
+                let font = self.font_mut().ok_or(FoundryError::NoFont)?;
                 let selection = points.as_deref().map(refs);
                 let changed = font.transform_anchored(
                     names.as_deref(),
@@ -541,12 +691,12 @@ impl Session {
                 Ok(Some(json!({ "glyphs": changed })))
             }
             Command::RoundCoordinates { names } => {
-                let font = self.font.as_mut().ok_or(FoundryError::NoFont)?;
+                let font = self.font_mut().ok_or(FoundryError::NoFont)?;
                 let changed = font.round_coordinates(names.as_deref())?;
                 Ok(Some(json!({ "glyphs": changed })))
             }
-            Command::Index => {
-                let font = self.font.as_ref().ok_or(FoundryError::NoFont)?;
+            Command::Index { font } => {
+                let font = self.font_by(font)?;
                 let glyphs: Vec<Value> = font
                     .glyphs
                     .iter()
@@ -563,30 +713,128 @@ impl Session {
                 Ok(Some(json!({ "glyphs": glyphs })))
             }
             Command::Undo => {
-                let previous = self
+                let doc = self.doc_mut().ok_or(FoundryError::NoFont)?;
+                let previous = doc
                     .undo
                     .pop()
                     .ok_or_else(|| FoundryError::Edit("nothing to undo".into()))?;
-                if let Some(current) = self.font.replace(previous) {
-                    self.redo.push(current);
-                }
-                self.last_edit = None;
+                let current = std::mem::replace(&mut doc.font, previous);
+                doc.redo.push(current);
+                doc.last_edit = None;
+                doc.dirty = true;
                 self.history_data()
             }
             Command::Redo => {
-                let next = self
+                let doc = self.doc_mut().ok_or(FoundryError::NoFont)?;
+                let next = doc
                     .redo
                     .pop()
                     .ok_or_else(|| FoundryError::Edit("nothing to redo".into()))?;
-                if let Some(current) = self.font.replace(next) {
-                    self.undo.push(current);
-                }
-                self.last_edit = None;
+                let current = std::mem::replace(&mut doc.font, next);
+                doc.undo.push(current);
+                doc.last_edit = None;
+                doc.dirty = true;
                 self.history_data()
             }
             Command::Checkpoint => {
-                self.last_edit = None;
+                if let Some(doc) = self.doc_mut() {
+                    doc.last_edit = None;
+                }
                 self.history_data()
+            }
+            Command::Fonts => Ok(Some(self.font_list())),
+            Command::SelectFont { id } => {
+                self.font_by(Some(id))?;
+                self.active = Some(id);
+                Ok(Some(self.summary(id)))
+            }
+            Command::CloseFont { id } => {
+                let id = id.or(self.active).ok_or(FoundryError::NoFont)?;
+                let index = self
+                    .docs
+                    .iter()
+                    .position(|doc| doc.id == id)
+                    .ok_or_else(|| FoundryError::Family(format!("no open font has id {id}")))?;
+                self.docs.remove(index);
+                if self.active == Some(id) {
+                    // The neighbour that slid into its place, or the last font.
+                    self.active = self
+                        .docs
+                        .get(index)
+                        .or_else(|| self.docs.last())
+                        .map(|doc| doc.id);
+                }
+                Ok(Some(self.font_list()))
+            }
+            Command::SetStyle {
+                family,
+                style,
+                weight,
+                italic,
+                italic_angle,
+            } => {
+                let font = self.font_mut().ok_or(FoundryError::NoFont)?;
+                font.set_style(StyleUpdate {
+                    family,
+                    name: style,
+                    weight,
+                    italic,
+                    italic_angle,
+                })?;
+                Ok(Some(json!({ "name": font.name, "style": font.style })))
+            }
+            Command::DeriveStyle {
+                style,
+                weight,
+                italic,
+                slant,
+            } => {
+                let source = self.font().ok_or(FoundryError::NoFont)?;
+                let derived = source.derive_style(&style, weight, italic, slant)?;
+                let id = self.add_font(derived, true);
+                Ok(Some(self.summary(id)))
+            }
+            Command::OpenFamily { path } => {
+                let (file, members) = load_family(Path::new(&path))?;
+                let mut opened = Vec::new();
+                for (member, font) in members {
+                    let id = self.add_font(font, false);
+                    opened.push(json!({ "id": id, "path": member.to_string_lossy() }));
+                }
+                if let Some(first) = opened.first().and_then(|entry| entry["id"].as_u64()) {
+                    self.active = u32::try_from(first).ok();
+                }
+                Ok(Some(json!({ "family": file.family, "opened": opened })))
+            }
+            Command::SaveFamily { path, ids } => {
+                let members = self.family_members(ids.as_deref())?;
+                let written = save_family(&members, Path::new(&path))?;
+                let family_name = members.first().map(|font| font.style.family.clone());
+                for doc in &mut self.docs {
+                    if Some(&doc.font.style.family) == family_name.as_ref() {
+                        doc.dirty = false;
+                    }
+                }
+                Ok(Some(json!({ "path": path, "styles": paths(&written) })))
+            }
+            Command::ExportFamily { dir, format, ids } => {
+                let members = self.family_members(ids.as_deref())?;
+                let issues = check_family(&members);
+                let written = export_family(&members, Path::new(&dir), format)?;
+                Ok(Some(json!({ "files": paths(&written), "issues": issues })))
+            }
+            Command::FamilyCheck { ids } => {
+                let members = self.family_members(ids.as_deref())?;
+                let issues = check_family(&members);
+                let styles: Vec<&str> = members
+                    .iter()
+                    .map(|font| font.style.name.as_str())
+                    .collect();
+                Ok(Some(json!({
+                    "styles": styles,
+                    "ready": issues.iter().all(|issue| !issue.blocking),
+                    "issues": issues,
+                })))
             }
             Command::History => self.history_data(),
             Command::Check { a, b } => compare_files(&a, &b),
@@ -601,7 +849,9 @@ impl Session {
                             "name": font.name,
                             "glyphs": font.glyph_names(),
                         });
-                        self.font = Some(font);
+                        let id = self.add_font(font, false);
+                        let mut data = data;
+                        data["id"] = json!(id);
                         Ok(Some(data))
                     }
                     Err(issues) => {
@@ -623,19 +873,32 @@ impl Session {
 
 impl Session {
     fn history_data(&self) -> Result<Option<Value>, Fail> {
-        Ok(Some(
-            json!({ "undo": self.undo.len(), "redo": self.redo.len() }),
-        ))
+        let (undo, redo) = self.history();
+        Ok(Some(json!({ "undo": undo, "redo": redo })))
+    }
+
+    /// What `create`, `open`, and `info` return for one open font.
+    fn summary(&self, id: u32) -> Value {
+        let Some(doc) = self.docs.iter().find(|doc| doc.id == id) else {
+            return Value::Null;
+        };
+        let font = &doc.font;
+        json!({
+            "id": id,
+            "name": font.name,
+            "upm": font.upm,
+            "metrics": font.metrics,
+            "style": font.style,
+            "glyphs": font.glyph_names(),
+        })
     }
 }
 
-fn summary(font: &Font) -> Value {
-    json!({
-        "name": font.name,
-        "upm": font.upm,
-        "metrics": font.metrics,
-        "glyphs": font.glyph_names(),
-    })
+fn paths(written: &[std::path::PathBuf]) -> Vec<String> {
+    written
+        .iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect()
 }
 
 fn compare_files(a: &str, b: &str) -> Result<Option<Value>, Fail> {
@@ -964,5 +1227,109 @@ mod tests {
         assert_eq!(index["glyphs"][0]["name"], json!("Eta"));
         assert_eq!(index["glyphs"][0]["unicode"], json!(72));
         assert_eq!(index["glyphs"][0]["contours"], json!(1));
+    }
+
+    #[test]
+    fn a_family_of_open_fonts() {
+        let dir = temp_dir();
+        let mut session = Session::new();
+        let created = line(&mut session, r#"{"op":"create","name":"Wide"}"#);
+        let regular = created.data.unwrap()["id"].as_u64().unwrap();
+        session.execute(Command::PutGlyph {
+            glyph: square("H", 0.0, 400.0),
+        });
+
+        // Derive an italic: a second open font, active, slanted, with its own history.
+        let derived = line(
+            &mut session,
+            r#"{"op":"derive_style","style":"Italic","slant":12}"#,
+        );
+        assert!(derived.ok, "{derived:?}");
+        let data = derived.data.unwrap();
+        let italic = data["id"].as_u64().unwrap();
+        assert_ne!(italic, regular);
+        assert_eq!(data["style"]["italic_angle"], json!(-12.0));
+        assert_eq!(session.font().unwrap().name, "Wide Italic");
+        assert_eq!(session.history(), (0, 0));
+        assert!(first_x(&session) == 0.0);
+
+        line(
+            &mut session,
+            r#"{"op":"move_points","name":"H","points":[[0,0]],"dx":7,"dy":0}"#,
+        );
+        assert_eq!(session.history(), (1, 0));
+
+        // The regular is untouched and keeps its own undo step from put_glyph.
+        let selected = line(
+            &mut session,
+            &format!(r#"{{"op":"select_font","id":{regular}}}"#),
+        );
+        assert!(selected.ok);
+        assert_eq!(first_x(&session), 0.0);
+        assert_eq!(session.history(), (1, 0));
+        let other = line(
+            &mut session,
+            &format!(r#"{{"op":"glyph","name":"H","font":{italic}}}"#),
+        );
+        assert_eq!(
+            other.data.unwrap()["contours"][0]["points"][0]["x"],
+            json!(7.0)
+        );
+
+        let listed = line(&mut session, r#"{"op":"fonts"}"#).data.unwrap();
+        assert_eq!(listed["fonts"].as_array().unwrap().len(), 2);
+        assert_eq!(listed["fonts"][1]["style"], json!("Italic"));
+        assert_eq!(listed["fonts"][1]["dirty"], json!(true));
+        assert_eq!(listed["active"], json!(regular));
+
+        let check = line(&mut session, r#"{"op":"family_check"}"#).data.unwrap();
+        assert_eq!(check["styles"], json!(["Regular", "Italic"]));
+        assert_eq!(check["ready"], json!(true));
+
+        let family = dir
+            .join("Wide.family.json")
+            .to_string_lossy()
+            .replace('\\', "/");
+        let saved = line(
+            &mut session,
+            &format!(r#"{{"op":"save_family","path":"{family}"}}"#),
+        );
+        assert!(saved.ok, "{saved:?}");
+        let listed = line(&mut session, r#"{"op":"fonts"}"#).data.unwrap();
+        assert_eq!(listed["fonts"][1]["dirty"], json!(false));
+
+        let out = dir.join("ttf").to_string_lossy().replace('\\', "/");
+        let exported = line(
+            &mut session,
+            &format!(r#"{{"op":"export_family","dir":"{out}","format":"ttf"}}"#),
+        );
+        assert!(exported.ok, "{exported:?}");
+        let files = exported.data.unwrap()["files"].clone();
+        assert!(files[1].as_str().unwrap().ends_with("Wide-Italic.ttf"));
+
+        // Close both, then open the family file: both styles come back.
+        assert!(line(&mut session, r#"{"op":"close_font"}"#).ok);
+        assert_eq!(session.font().unwrap().style.name, "Italic");
+        assert!(line(&mut session, r#"{"op":"close_font"}"#).ok);
+        assert!(session.font().is_none());
+        let opened = line(
+            &mut session,
+            &format!(r#"{{"op":"open_family","path":"{family}"}}"#),
+        );
+        assert!(opened.ok, "{opened:?}");
+        assert_eq!(opened.data.unwrap()["opened"].as_array().unwrap().len(), 2);
+        assert_eq!(session.font().unwrap().style.name, "Regular");
+
+        let restyled = line(
+            &mut session,
+            r#"{"op":"set_style","style":"Bold","weight":700}"#,
+        );
+        assert!(restyled.ok);
+        assert_eq!(session.font().unwrap().name, "Wide Bold");
+        assert!(line(&mut session, r#"{"op":"undo"}"#).ok);
+        assert_eq!(session.font().unwrap().style.name, "Regular");
+        assert!(!line(&mut session, r#"{"op":"select_font","id":999}"#).ok);
+
+        let _ = fs::remove_dir_all(dir);
     }
 }

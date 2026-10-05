@@ -69,8 +69,20 @@ pub(crate) fn read_font_binary(bytes: &[u8], fallback_name: &str) -> Result<Font
     if !(MIN_UPM..=MAX_UPM).contains(&upm) {
         return Err(format!("units per em {upm} is outside {MIN_UPM}-{MAX_UPM}"));
     }
-    let name = font_name(&face).unwrap_or_else(|| fallback_name.to_string());
+    let names = family_and_style(&face);
+    let name = match &names {
+        Some((family, Some(style))) => format!("{family} {style}"),
+        Some((family, None)) => family.clone(),
+        None => fallback_name.to_string(),
+    };
     let mut font = Font::new(name, upm).map_err(|err| err.to_string())?;
+    if let Some((family, style)) = names {
+        font.style.family = family;
+        font.style.name = style.unwrap_or_else(|| "Regular".to_string());
+    }
+    font.style.weight = face.weight().to_number().clamp(1, 1000);
+    font.style.italic = face.is_italic();
+    font.style.italic_angle = f64::from(face.italic_angle());
     font.metrics.ascender = f64::from(face.ascender());
     font.metrics.descender = f64::from(face.descender());
     if let Some(cap_height) = face.capital_height().filter(|value| *value > 0) {
@@ -286,8 +298,8 @@ fn push_u32(bytes: &mut Vec<u8>, value: u32) {
     bytes.extend(value.to_be_bytes());
 }
 
-/// Typographic family and style when present, else the legacy pair, as `"{family} {style}"`.
-fn font_name(face: &Face<'_>) -> Option<String> {
+/// Typographic family and style when present, else the legacy pair.
+fn family_and_style(face: &Face<'_>) -> Option<(String, Option<String>)> {
     // Prefer the Windows English (United States) record, then any readable one.
     let lookup = |id: u16| {
         let read = |english_only: bool| {
@@ -303,10 +315,7 @@ fn font_name(face: &Face<'_>) -> Option<String> {
     };
     let family = lookup(name_id::TYPOGRAPHIC_FAMILY).or_else(|| lookup(name_id::FAMILY))?;
     let style = lookup(name_id::TYPOGRAPHIC_SUBFAMILY).or_else(|| lookup(name_id::SUBFAMILY));
-    Some(match style {
-        Some(style) => format!("{family} {style}"),
-        None => family,
-    })
+    Some((family, style))
 }
 
 /// The lowest Unicode value mapped to each glyph. Other values for the same glyph are dropped.

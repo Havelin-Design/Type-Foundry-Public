@@ -75,6 +75,9 @@ impl FoundryWindow {
                 egui::CollapsingHeader::new("Font")
                     .default_open(true)
                     .show(ui, |ui| self.font_section(ui));
+                egui::CollapsingHeader::new("Style")
+                    .default_open(true)
+                    .show(ui, |ui| self.style_section(ui));
                 if self.current.is_some() {
                     egui::CollapsingHeader::new("Glyph")
                         .default_open(true)

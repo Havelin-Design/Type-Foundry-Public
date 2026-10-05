@@ -18,11 +18,11 @@ const INVALID_REQUEST: i64 = -32600;
 const METHOD_NOT_FOUND: i64 = -32601;
 const INVALID_PARAMS: i64 = -32602;
 
-/// The command session plus the path `font_save` falls back to.
+/// The command session plus, per open font, the path `font_save` falls back to.
 #[derive(Debug, Default)]
 pub struct Server {
     session: Session,
-    last_path: Option<String>,
+    paths: std::collections::HashMap<u32, String>,
 }
 
 impl Server {
@@ -109,17 +109,27 @@ impl Server {
             "point_move" => "move_point",
             "font_check" => "check",
             "font_blend" => "blend",
+            "font_list" => "fonts",
+            "font_select" => "select_font",
+            "font_close" => "close_font",
+            "style_set" => "set_style",
+            "style_derive" => "derive_style",
+            "family_check" => "family_check",
+            "family_open" => "open_family",
+            "family_save" => "save_family",
+            "family_export" => "export_family",
             other => return Err((INVALID_PARAMS, format!("unknown tool {other}"))),
         };
 
         if op == "save" && !args.contains_key("path") {
-            match &self.last_path {
+            let remembered = self.session.active().and_then(|id| self.paths.get(&id));
+            match remembered {
                 Some(path) => {
                     args.insert("path".to_string(), Value::String(path.clone()));
                 }
                 None => {
                     return Ok(tool_result(
-                        "font_save needs a path: nothing has been opened or saved yet",
+                        "font_save needs a path: this font has not been opened from or saved to a file yet",
                         true,
                     ));
                 }
@@ -138,24 +148,44 @@ impl Server {
 
         let response = self.session.execute(command);
         if response.ok {
-            self.remember_path(op, &args);
+            self.remember_paths(op, &args, response.data.as_ref());
         }
         Ok(response_result(&response))
     }
 
-    /// The path that holds the open font. A new font has none until it is saved.
-    fn remember_path(&mut self, op: &str, args: &Map<String, Value>) {
+    /// The file that holds each open font. A new or derived style has none until it is saved.
+    fn remember_paths(&mut self, op: &str, args: &Map<String, Value>, data: Option<&Value>) {
         let key = match op {
             "open" | "save" => "path",
             "blend" => "out",
-            "create" => {
-                self.last_path = None;
+            "open_family" => {
+                for entry in data
+                    .and_then(|data| data["opened"].as_array())
+                    .into_iter()
+                    .flatten()
+                {
+                    if let (Some(id), Some(path)) = (entry["id"].as_u64(), entry["path"].as_str()) {
+                        self.paths.insert(id as u32, path.replace('\\', "/"));
+                    }
+                }
+                return;
+            }
+            "close_font" => {
+                let open: Vec<u32> = data
+                    .and_then(|data| data["fonts"].as_array())
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|font| font["id"].as_u64().map(|id| id as u32))
+                    .collect();
+                self.paths.retain(|id, _| open.contains(id));
                 return;
             }
             _ => return,
         };
-        if let Some(path) = args.get(key).and_then(Value::as_str) {
-            self.last_path = Some(path.to_string());
+        if let (Some(id), Some(path)) =
+            (self.session.active(), args.get(key).and_then(Value::as_str))
+        {
+            self.paths.insert(id, path.to_string());
         }
     }
 }
@@ -302,6 +332,88 @@ fn tool_list() -> Value {
                 },
                 "required": ["a", "b", "out"]
             }
+        },
+        {
+            "name": "font_list",
+            "description": "List every open font with its id, family, style, weight, italic flag, and whether it has unsaved changes. Other tools act on the active font.",
+            "inputSchema": none
+        },
+        {
+            "name": "font_select",
+            "description": "Make an open font the active one, by id from font_list.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "id": { "type": "integer" } },
+                "required": ["id"]
+            }
+        },
+        {
+            "name": "font_close",
+            "description": "Close an open font by id, or the active font. Unsaved changes are lost.",
+            "inputSchema": { "type": "object", "properties": { "id": { "type": "integer" } } }
+        },
+        {
+            "name": "style_set",
+            "description": "Set the active font's family name, style name, weight (1-1000), italic flag, or italic angle (degrees counter-clockwise, -12 leans right).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "family": { "type": "string" },
+                    "style": { "type": "string" },
+                    "weight": { "type": "integer", "minimum": 1, "maximum": 1000 },
+                    "italic": { "type": "boolean" },
+                    "italic_angle": { "type": "number" }
+                }
+            }
+        },
+        {
+            "name": "style_derive",
+            "description": "Copy the active font as a new style of its family and make the copy active. slant leans every glyph that many degrees, to start an italic.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "style": { "type": "string", "description": "For example Italic or Bold." },
+                    "weight": { "type": "integer", "minimum": 1, "maximum": 1000 },
+                    "italic": { "type": "boolean" },
+                    "slant": { "type": "number", "default": 0 }
+                },
+                "required": ["style"]
+            }
+        },
+        {
+            "name": "family_check",
+            "description": "Check the open styles of the active font's family: matching family names, distinct styles, units per em, line metrics, and glyph coverage.",
+            "inputSchema": none
+        },
+        {
+            "name": "family_open",
+            "description": "Open a .family.json file and every style it lists.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "path": path },
+                "required": ["path"]
+            }
+        },
+        {
+            "name": "family_save",
+            "description": "Save every open style of the active font's family as Family-Style.json beside a .family.json file at path.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "path": path },
+                "required": ["path"]
+            }
+        },
+        {
+            "name": "family_export",
+            "description": "Write every open style of the active font's family into dir as Family-Style.ttf, .ufo, or .json, with names set so apps group them as one family.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "dir": path,
+                    "format": { "type": "string", "enum": ["ttf", "ufo", "json"] }
+                },
+                "required": ["dir", "format"]
+            }
         }
     ])
 }
@@ -386,7 +498,8 @@ mod tests {
             .map(|tool| tool["name"].as_str().unwrap())
             .collect();
         assert!(names.contains(&"point_move"));
-        assert_eq!(names.len(), 9);
+        assert_eq!(names.len(), 18);
+        assert!(names.contains(&"style_derive"));
         assert!(!names.iter().any(|name| name.contains("prompt")));
     }
 
@@ -494,5 +607,39 @@ mod tests {
         let log = String::from_utf8(log).unwrap();
         assert!(log.contains("typefoundry MCP server"));
         assert!(log.contains("unknown method nope"));
+    }
+
+    #[test]
+    fn save_paths_are_kept_per_font() {
+        let dir = temp_dir();
+        let regular = dir.join("Wide.json").to_string_lossy().replace('\\', "/");
+        let mut server = Server::new();
+        call(&mut server, 1, "font_create", json!({ "name": "Wide" }));
+        assert_eq!(
+            call(&mut server, 2, "font_save", json!({ "path": regular }))["isError"],
+            json!(false)
+        );
+        let derived = call(
+            &mut server,
+            3,
+            "style_derive",
+            json!({ "style": "Italic", "slant": 12 }),
+        );
+        assert_eq!(derived["isError"], json!(false), "{derived}");
+        // The italic has never been saved, so a bare save must not reuse the regular's file.
+        let bare = call(&mut server, 4, "font_save", json!({}));
+        assert_eq!(bare["isError"], json!(true));
+
+        let fonts = payload(&call(&mut server, 5, "font_list", json!({})));
+        let regular_id = fonts["data"]["fonts"][0]["id"].clone();
+        call(&mut server, 6, "font_select", json!({ "id": regular_id }));
+        assert_eq!(
+            call(&mut server, 7, "font_save", json!({}))["isError"],
+            json!(false)
+        );
+        let check = payload(&call(&mut server, 8, "family_check", json!({})));
+        assert_eq!(check["data"]["styles"], json!(["Regular", "Italic"]));
+
+        let _ = fs::remove_dir_all(dir);
     }
 }
