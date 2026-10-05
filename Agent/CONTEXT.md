@@ -63,6 +63,12 @@ Frozen for now:
 
 ## Session log
 
+### 2026-10-04 — Editor tools are on main
+
+- Commit `62c801c` (`62c801c899da14a8947d48dd311965b8f7a8160f`) is on `main`. Push `f9883a3..62c801c` went to `https://github.com/thavelin/Type-Foundry.git` with the one-shot safe.directory and `gh auth git-credential`. Origin stays SSH. No force-push.
+- The release window was rebuilt and opened with the title Type Foundry, then the process was closed. The Start menu shortcut still targets `C:\Users\Troy Havelin\AppData\Local\typefoundry-target\release\typefoundry.exe`.
+- That build has Make italic, family-wide guides, onion skin, the split overview and editor, a review sheet that can sit on the bottom, the right, or in a window, the lasso, point alignment, and File → Export family. TrueType export includes the unique name Windows requires.
+
 ### 2026-10-04 — Vostok Serif v3 italic
 
 - Focus: take the installed v3 drawings and add a 10° italic so Windows shows Regular and Italic as one family.
