@@ -10,11 +10,13 @@ use foundry_app::palette::{ALERT, HAIRLINE, MUTED, PANEL, SIGNAL};
 use foundry_app::{Handle, Outline, Pt, Viewport};
 use serde_json::{Value, json};
 
+use crate::align::AlignTo;
 use crate::effects::EffectsState;
+use crate::guides::GuideBook;
 use crate::icons::IconSet;
 use crate::preview::{Block, starter_copy};
-use crate::settings::Settings;
-use crate::{APP_TITLE, COPY_KEY, LAST_DIR_KEY, SETTINGS_KEY, color};
+use crate::settings::{ReviewPlace, Settings};
+use crate::{APP_TITLE, COPY_KEY, GUIDES_KEY, LAST_DIR_KEY, SETTINGS_KEY, color};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -28,6 +30,8 @@ pub enum Tool {
     Pen,
     Rectangle,
     Oval,
+    Lasso,
+    Guide,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -75,6 +79,20 @@ pub enum Drag {
     /// A rectangle or oval drag, in font units. `start` is where the button went down.
     Shape {
         start: Pt,
+        now: Pt,
+    },
+    /// A freeform loop, in screen points.
+    Lasso {
+        points: Vec<Pt>,
+        additive: bool,
+    },
+    /// Dragging a guide that already exists.
+    GuideMove {
+        index: usize,
+    },
+    /// Drawing a new guide. `origin` and `now` are screen points.
+    GuideNew {
+        origin: Pt,
         now: Pt,
     },
 }
@@ -137,6 +155,9 @@ pub struct FoundryWindow {
     /// The open contour the pen is adding to.
     pub pen_contour: Option<usize>,
     pub settings: Settings,
+    /// Lines for the person drawing. Not part of the font.
+    pub guides: GuideBook,
+    pub selected_guide: Option<usize>,
     pub effects: EffectsState,
     pub icons: IconSet,
     pub dialogs: Dialogs,
@@ -182,6 +203,8 @@ impl FoundryWindow {
             drag: Drag::None,
             pen_contour: None,
             settings,
+            guides: GuideBook::default(),
+            selected_guide: None,
             effects: EffectsState::default(),
             icons: IconSet::default(),
             dialogs: Dialogs::default(),
@@ -430,12 +453,35 @@ impl FoundryWindow {
     pub fn choose_tool(&mut self, tool: Tool) {
         if self.tool != tool {
             self.pen_contour = None;
-            if matches!(self.drag, Drag::Marquee { .. } | Drag::Shape { .. }) {
+            if matches!(
+                self.drag,
+                Drag::Marquee { .. }
+                    | Drag::Shape { .. }
+                    | Drag::Lasso { .. }
+                    | Drag::GuideNew { .. }
+                    | Drag::GuideMove { .. }
+            ) {
                 self.drag = Drag::None;
             }
             self.tool = tool;
+            if tool == Tool::Guide {
+                self.status = (
+                    "Drag across for a horizontal guide, or up and down for a vertical one. Guides show on every glyph and are not saved in the font.".into(),
+                    Tone::Quiet,
+                );
+            }
+            if tool == Tool::Lasso {
+                self.status = (
+                    "Drag a loop around the points you want. Shift adds them to the selection."
+                        .into(),
+                    Tone::Quiet,
+                );
+            }
         }
-        if matches!(tool, Tool::Pen | Tool::Rectangle | Tool::Oval) {
+        if matches!(
+            tool,
+            Tool::Pen | Tool::Rectangle | Tool::Oval | Tool::Lasso | Tool::Guide
+        ) {
             if self.current.is_some() {
                 self.mode = Mode::Editor;
             } else {
@@ -855,6 +901,9 @@ impl FoundryWindow {
                     self.request_close(id);
                 }
                 ui.separator();
+                if item(ui, "Make italic…", "Ctrl+Shift+I", has_font) {
+                    self.open_italic(None);
+                }
                 if item(ui, "New style from this font…", "Ctrl+Shift+D", has_font) {
                     self.open_new_style();
                 }
@@ -905,12 +954,48 @@ impl FoundryWindow {
                 if item(ui, "Reverse contour direction", "", has_glyph) {
                     self.reverse_contours();
                 }
+                ui.separator();
+                ui.menu_button("Align points", |ui| {
+                    let ready = self.selection.len() >= 2;
+                    let spread = self.selection.len() >= 3;
+                    if item(ui, "Left", "", ready) {
+                        self.align_selection(AlignTo::Left);
+                    }
+                    if item(ui, "Center", "", ready) {
+                        self.align_selection(AlignTo::CenterX);
+                    }
+                    if item(ui, "Right", "", ready) {
+                        self.align_selection(AlignTo::Right);
+                    }
+                    if item(ui, "Top", "", ready) {
+                        self.align_selection(AlignTo::Top);
+                    }
+                    if item(ui, "Middle", "", ready) {
+                        self.align_selection(AlignTo::Middle);
+                    }
+                    if item(ui, "Bottom", "", ready) {
+                        self.align_selection(AlignTo::Bottom);
+                    }
+                    ui.separator();
+                    if item(ui, "Distribute horizontally", "", spread) {
+                        self.align_selection(AlignTo::DistributeX);
+                    }
+                    if item(ui, "Distribute vertically", "", spread) {
+                        self.align_selection(AlignTo::DistributeY);
+                    }
+                });
             });
             ui.menu_button("View", |ui| {
                 if item(ui, "Font overview", "Ctrl+1", has_font) {
                     self.mode = Mode::Overview;
+                    self.settings.split_main = false;
                 }
                 if item(ui, "Glyph editor", "Ctrl+2", has_glyph) {
+                    self.mode = Mode::Editor;
+                    self.settings.split_main = false;
+                }
+                if item(ui, "Overview and editor", "", has_glyph) {
+                    self.settings.split_main = true;
                     self.mode = Mode::Editor;
                 }
                 ui.separator();
@@ -926,8 +1011,34 @@ impl FoundryWindow {
                 ui.separator();
                 ui.checkbox(&mut self.settings.show_glyph_list, "Glyph list");
                 ui.checkbox(&mut self.settings.show_inspector, "Inspector");
-                ui.checkbox(&mut self.settings.show_preview, "Preview pane");
+                ui.checkbox(&mut self.settings.show_preview, "Review sheet");
+                ui.horizontal(|ui| {
+                    ui.selectable_value(
+                        &mut self.settings.review_place,
+                        ReviewPlace::Bottom,
+                        "Bottom",
+                    );
+                    ui.selectable_value(
+                        &mut self.settings.review_place,
+                        ReviewPlace::Right,
+                        "Right",
+                    );
+                    ui.selectable_value(
+                        &mut self.settings.review_place,
+                        ReviewPlace::Float,
+                        "Window",
+                    );
+                });
                 ui.checkbox(&mut self.family_preview, "Preview every style");
+                let onion = self.settings.onion_skin;
+                ui.checkbox(&mut self.settings.onion_skin, "Onion skin")
+                    .on_hover_text(
+                        "Previous and next glyphs beside this one, outlines only, no handles.",
+                    );
+                if self.settings.onion_skin && !onion {
+                    self.view = None;
+                }
+                ui.checkbox(&mut self.settings.show_guides, "Guides");
                 ui.separator();
                 ui.checkbox(&mut self.settings.fill, "Fill");
                 ui.checkbox(&mut self.settings.outline, "Outline stroke");
@@ -960,9 +1071,11 @@ impl FoundryWindow {
             ui.menu_button("Tools", |ui| {
                 for (tool, icon, label) in [
                     (Tool::Select, "location-arrow", "Select   V"),
+                    (Tool::Lasso, "lasso", "Lasso   L"),
                     (Tool::Pen, "pencil", "Pen   P"),
                     (Tool::Rectangle, "square", "Rectangle   R"),
                     (Tool::Oval, "circle", "Oval   O"),
+                    (Tool::Guide, "guide", "Guide   G"),
                 ] {
                     if self.icon_menu(ui, icon, label, self.tool == tool) {
                         self.choose_tool(tool);
@@ -1005,21 +1118,36 @@ impl FoundryWindow {
                 ui,
                 "layout-cells",
                 "Overview",
-                self.mode == Mode::Overview,
+                self.mode == Mode::Overview && !self.settings.split_main,
                 true,
                 "Overview",
             ) {
                 self.mode = Mode::Overview;
+                self.settings.split_main = false;
             }
             if self.icon_button(
                 ui,
                 "pencil-to-square",
                 "Editor",
-                self.mode == Mode::Editor,
+                self.mode == Mode::Editor && !self.settings.split_main,
                 self.current.is_some(),
                 "Editor",
             ) {
                 self.mode = Mode::Editor;
+                self.settings.split_main = false;
+            }
+            if ui
+                .selectable_label(self.settings.split_main, "Split")
+                .on_hover_text("Show the glyph overview and the editor at the same time")
+                .clicked()
+            {
+                self.settings.split_main = !self.settings.split_main;
+                if self.settings.split_main && self.current.is_none() {
+                    self.status = (
+                        "Pick a glyph to edit beside the overview.".into(),
+                        Tone::Quiet,
+                    );
+                }
             }
             ui.separator();
             for (tool, icon, label, hover) in [
@@ -1046,6 +1174,18 @@ impl FoundryWindow {
                     "circle",
                     "Oval",
                     "O · drag to add a closed oval",
+                ),
+                (
+                    Tool::Lasso,
+                    "lasso",
+                    "Lasso",
+                    "L · drag a loop around points. Shift adds to the selection",
+                ),
+                (
+                    Tool::Guide,
+                    "guide",
+                    "Guide",
+                    "G · drag across for a horizontal guide, or up and down for a vertical one",
                 ),
             ] {
                 if self.icon_button(ui, icon, label, self.tool == tool, true, hover) {
@@ -1108,6 +1248,8 @@ impl FoundryWindow {
                     Tool::Pen => "Pen",
                     Tool::Rectangle => "Rectangle",
                     Tool::Oval => "Oval",
+                    Tool::Lasso => "Lasso",
+                    Tool::Guide => "Guide",
                 });
             });
         });
@@ -1133,6 +1275,9 @@ impl FoundryWindow {
         }
         if pressed(command_shift(Key::D)) && self.has_font() {
             self.open_new_style();
+        }
+        if pressed(command_shift(Key::I)) && self.has_font() {
+            self.open_italic(None);
         }
         if pressed(command_shift(Key::Tab)) {
             self.step_font(-1);
@@ -1168,9 +1313,11 @@ impl FoundryWindow {
         }
         if pressed(command(Key::Num1)) {
             self.mode = Mode::Overview;
+            self.settings.split_main = false;
         }
         if pressed(command(Key::Num2)) && self.current.is_some() {
             self.mode = Mode::Editor;
+            self.settings.split_main = false;
         }
         if pressed(command(Key::Equals)) || pressed(command(Key::Plus)) {
             self.zoom(1.25);
@@ -1215,6 +1362,12 @@ impl FoundryWindow {
         if pressed(plain(Key::O)) {
             self.choose_tool(Tool::Oval);
         }
+        if pressed(plain(Key::L)) {
+            self.choose_tool(Tool::Lasso);
+        }
+        if pressed(plain(Key::G)) {
+            self.choose_tool(Tool::Guide);
+        }
         if pressed(plain(Key::OpenBracket)) {
             self.step_glyph(-1);
         }
@@ -1222,22 +1375,31 @@ impl FoundryWindow {
             self.step_glyph(1);
         }
         if pressed(plain(Key::Escape)) {
-            if matches!(self.drag, Drag::Shape { .. }) {
+            if matches!(
+                self.drag,
+                Drag::Shape { .. } | Drag::Lasso { .. } | Drag::GuideNew { .. }
+            ) {
                 self.drag = Drag::None;
-                self.status = ("Cancelled the shape.".into(), Tone::Quiet);
+                self.status = ("Cancelled.".into(), Tone::Quiet);
             }
             self.selection.clear();
+            self.selected_guide = None;
             self.pen_contour = None;
         }
         if pressed(plain(Key::Tab)) {
+            self.settings.split_main = false;
             self.mode = match self.mode {
                 Mode::Overview if self.current.is_some() => Mode::Editor,
                 _ => Mode::Overview,
             };
         }
-        if self.mode == Mode::Editor {
+        if self.editing() {
             if pressed(plain(Key::Delete)) || pressed(plain(Key::Backspace)) {
-                self.delete_selection();
+                if self.selection.is_empty() && self.selected_guide.is_some() {
+                    self.delete_selected_guide();
+                } else {
+                    self.delete_selection();
+                }
             }
             for (key, dx, dy) in [
                 (Key::ArrowLeft, -1.0, 0.0),
@@ -1431,7 +1593,8 @@ impl eframe::App for FoundryWindow {
         egui::Panel::bottom("status")
             .frame(bar)
             .show(ui, |ui| self.status_bar(ui));
-        if self.settings.show_preview && self.has_font() {
+        let review = self.settings.show_preview && self.has_font();
+        if review && self.settings.review_place == ReviewPlace::Bottom {
             egui::Panel::bottom("preview")
                 .frame(bar)
                 .resizable(true)
@@ -1455,12 +1618,28 @@ impl eframe::App for FoundryWindow {
                 .frame(bar)
                 .show(ui, |ui| self.inspector(ui));
         }
+        if review && self.settings.review_place == ReviewPlace::Right {
+            egui::Panel::right("review")
+                .frame(bar)
+                .resizable(true)
+                .default_size(420.0)
+                .size_range(280.0..=760.0)
+                .show(ui, |ui| self.preview_pane(ui));
+        }
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(color(foundry_app::palette::PAGE)))
-            .show(ui, |ui| match self.mode {
-                Mode::Overview => self.overview(ui),
-                Mode::Editor => self.canvas(ui),
-            });
+            .show(ui, |ui| self.main_view(ui));
+        if review && self.settings.review_place == ReviewPlace::Float {
+            let mut open = true;
+            egui::Window::new("Review")
+                .id(egui::Id::new("review-sheet"))
+                .open(&mut open)
+                .resizable(true)
+                .default_size([680.0, 300.0])
+                .min_size([360.0, 180.0])
+                .show(&ctx, |ui| self.preview_pane(ui));
+            self.settings.show_preview = open;
+        }
 
         self.dialogs(&ctx);
         self.family_dialogs(&ctx);
@@ -1473,6 +1652,61 @@ impl eframe::App for FoundryWindow {
         }
         eframe::set_value(storage, SETTINGS_KEY, &self.settings);
         eframe::set_value(storage, COPY_KEY, &self.copy);
+        eframe::set_value(storage, GUIDES_KEY, &self.guides);
+    }
+}
+
+impl FoundryWindow {
+    /// The editor is on screen, either alone or beside the overview.
+    fn editing(&self) -> bool {
+        self.current.is_some() && (self.mode == Mode::Editor || self.settings.split_main)
+    }
+
+    fn main_view(&mut self, ui: &mut egui::Ui) {
+        if self.settings.split_main && self.has_font() && self.current.is_some() {
+            self.split_view(ui);
+            return;
+        }
+        match self.mode {
+            Mode::Overview => self.overview(ui),
+            Mode::Editor => self.canvas(ui),
+        }
+    }
+
+    /// Overview on the left, the glyph being edited on the right, with a draggable split.
+    fn split_view(&mut self, ui: &mut egui::Ui) {
+        let full = ui.available_rect_before_wrap();
+        let ratio = self.settings.split_ratio.clamp(0.22, 0.78);
+        let room = full.width().max(96.0);
+        let left_w = (room * ratio).clamp(48.0, room - 48.0);
+        let gap = 6.0;
+        let left = egui::Rect::from_min_size(full.min, egui::vec2(left_w, full.height()));
+        let bar = egui::Rect::from_min_size(
+            egui::pos2(left.right(), full.top()),
+            egui::vec2(gap, full.height()),
+        );
+        let right = egui::Rect::from_min_max(egui::pos2(bar.right(), full.top()), full.max);
+        ui.scope_builder(egui::UiBuilder::new().max_rect(left), |ui| {
+            self.overview(ui);
+        });
+        let separator = ui.allocate_rect(bar, egui::Sense::click_and_drag());
+        if separator.hovered() || separator.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        }
+        if separator.dragged()
+            && let Some(pointer) = separator.interact_pointer_pos()
+        {
+            self.settings.split_ratio =
+                ((pointer.x - full.left()) / full.width()).clamp(0.22, 0.78);
+        }
+        ui.painter().vline(
+            bar.center().x,
+            bar.y_range(),
+            Stroke::new(1.0, color(foundry_app::palette::HAIRLINE)),
+        );
+        ui.scope_builder(egui::UiBuilder::new().max_rect(right), |ui| {
+            self.canvas(ui);
+        });
     }
 }
 
@@ -1521,6 +1755,8 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl+1 / Ctrl+2, Tab", "Overview / Editor"),
     ("Enter (overview)", "Edit the selected glyph"),
     ("[ and ]", "Previous / next glyph"),
+    ("V / L", "Select tool / Lasso"),
+    ("G", "Guide. Drag across or up and down"),
     ("V / P", "Select tool / Pen tool"),
     (
         "R / O",
@@ -1542,6 +1778,8 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("Right or middle drag", "Pan"),
     ("Ctrl+0, double-click empty", "Fit the glyph"),
     ("Ctrl+E", "Effects"),
+    ("Ctrl+Shift+I", "Make an italic style from this font"),
+    ("Ctrl+Shift+D", "New style from this font"),
     ("Ctrl+,", "Settings"),
 ];
 

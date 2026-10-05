@@ -532,6 +532,40 @@ impl Anchor {
     }
 }
 
+/// Even-odd test. Points exactly on an edge are not treated as inside.
+pub fn point_in_polygon(point: Pt, polygon: &[Pt]) -> bool {
+    if polygon.len() < 3 {
+        return false;
+    }
+    let mut inside = false;
+    let mut previous = polygon.len() - 1;
+    for index in 0..polygon.len() {
+        let (a, b) = (polygon[previous], polygon[index]);
+        let crosses = (a.y > point.y) != (b.y > point.y);
+        if crosses {
+            let x = a.x + (b.x - a.x) * (point.y - a.y) / (b.y - a.y);
+            if point.x < x {
+                inside = !inside;
+            }
+        }
+        previous = index;
+    }
+    inside
+}
+
+/// Handles whose screen position falls inside a lasso drawn in screen points.
+pub fn handles_in_polygon(outline: &Outline, view: &Viewport, polygon: &[Pt]) -> Vec<Handle> {
+    outline
+        .handles()
+        .into_iter()
+        .filter(|handle| {
+            outline
+                .point(*handle)
+                .is_some_and(|point| point_in_polygon(view.to_screen(point.at), polygon))
+        })
+        .collect()
+}
+
 /// Handles whose screen position falls inside the box spanned by two screen corners.
 pub fn handles_in_rect(outline: &Outline, view: &Viewport, a: Pt, b: Pt) -> Vec<Handle> {
     let (min_x, max_x) = (a.x.min(b.x), a.x.max(b.x));
@@ -873,6 +907,39 @@ mod tests {
 
     fn near(a: Pt, b: Pt) -> bool {
         (a.x - b.x).abs() < 1e-9 && (a.y - b.y).abs() < 1e-9
+    }
+
+    #[test]
+    fn a_lasso_contains_the_points_inside_it() {
+        let square = [
+            Pt::new(0.0, 0.0),
+            Pt::new(10.0, 0.0),
+            Pt::new(10.0, 10.0),
+            Pt::new(0.0, 10.0),
+        ];
+        assert!(point_in_polygon(Pt::new(5.0, 5.0), &square));
+        assert!(!point_in_polygon(Pt::new(15.0, 5.0), &square));
+        assert!(!point_in_polygon(Pt::new(5.0, 5.0), &square[..2]));
+        let outline = square_outline();
+        let view = Viewport {
+            scale: 1.0,
+            origin: Pt::new(0.0, 100.0),
+        };
+        // Font (100, 0) lands at screen (100, 100). The lasso covers that corner only.
+        let lasso = [
+            Pt::new(90.0, 90.0),
+            Pt::new(120.0, 90.0),
+            Pt::new(120.0, 120.0),
+            Pt::new(90.0, 120.0),
+        ];
+        let hits = handles_in_polygon(&outline, &view, &lasso);
+        assert_eq!(
+            hits,
+            vec![Handle {
+                contour: 0,
+                point: 1
+            }]
+        );
     }
 
     #[test]

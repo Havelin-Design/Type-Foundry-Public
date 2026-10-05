@@ -3,7 +3,7 @@
 
 use eframe::egui;
 use foundry_api::Command;
-use foundry_app::palette::{ALERT, AMBER, MUTED, SIGNAL};
+use foundry_app::palette::{ALERT, AMBER, FOCUS, INVERSE, MUTED, SIGNAL};
 use serde_json::{Value, json};
 
 use crate::app::{FoundryWindow, Mode, Scope, Tone};
@@ -17,11 +17,19 @@ pub struct StyleFields {
     pub loaded_for: Option<u32>,
 }
 
+/// Which family member the dialog is making.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum StyleKind {
+    Italic,
+    Other,
+}
+
 pub struct NewStyle {
     pub style: String,
     pub weight: u16,
     pub italic: bool,
     pub slant: f64,
+    pub kind: StyleKind,
 }
 
 pub struct ExportForm {
@@ -75,9 +83,17 @@ impl FoundryWindow {
                 ui.add_space(6.0);
             }
             ui.separator();
+            if accent_button(ui, "Make italic")
+                .on_hover_text(
+                    "Copy this font as an italic. The slant is the same lean as Effects → Slant. This font stays as it is.",
+                )
+                .clicked()
+            {
+                self.open_italic(None);
+            }
             if ui
                 .button("New style…")
-                .on_hover_text("Copy this font as another style of the family, such as an Italic")
+                .on_hover_text("Copy this font as another style, such as Bold")
                 .clicked()
             {
                 self.open_new_style();
@@ -124,24 +140,44 @@ impl FoundryWindow {
         self.compare = choice;
     }
 
+    /// Open the italic dialog. `slant` uses that angle; `None` uses 12°, or 0 when this font is
+    /// already italic so the outlines are not leaned a second time.
+    pub fn open_italic(&mut self, slant: Option<f64>) {
+        let Some(font) = self.session.font() else {
+            return;
+        };
+        let already = font.style.italic;
+        let style = if font.style.name == "Regular" {
+            "Italic".to_string()
+        } else if font.style.name.to_ascii_lowercase().contains("italic") {
+            format!("{} copy", font.style.name)
+        } else {
+            format!("{} Italic", font.style.name)
+        };
+        self.dialogs.new_style = Some(NewStyle {
+            style,
+            weight: font.style.weight,
+            italic: true,
+            slant: slant.unwrap_or(if already { 0.0 } else { 12.0 }),
+            kind: StyleKind::Italic,
+        });
+    }
+
     pub fn open_new_style(&mut self) {
         let Some(font) = self.session.font() else {
             return;
         };
-        let upright = !font.style.italic;
+        let italic = font.style.italic;
         self.dialogs.new_style = Some(NewStyle {
-            style: if upright {
-                if font.style.name == "Regular" {
-                    "Italic".to_string()
-                } else {
-                    format!("{} Italic", font.style.name)
-                }
+            style: if italic {
+                "Bold Italic".to_string()
             } else {
                 "Bold".to_string()
             },
-            weight: if upright { font.style.weight } else { 700 },
-            italic: upright,
-            slant: if upright { 12.0 } else { 0.0 },
+            weight: 700,
+            italic,
+            slant: 0.0,
+            kind: StyleKind::Other,
         });
     }
 
@@ -187,13 +223,18 @@ impl FoundryWindow {
         });
         if response.ok {
             self.font_switched();
-            self.status = (
+            let name = form.style.trim();
+            let detail = if form.slant.abs() > f64::EPSILON {
                 format!(
-                    "Made {}. It is a separate font in the family: edit it, then File > Save family.",
-                    form.style.trim()
-                ),
-                Tone::Done,
-            );
+                    "Made {name} at {slant:.0}°. The font you copied stays open and unchanged. Edit the new style, then File > Save family.",
+                    slant = form.slant
+                )
+            } else {
+                format!(
+                    "Made {name}. The font you copied stays open and unchanged. Edit the new style, then File > Save family."
+                )
+            };
+            self.status = (detail, Tone::Done);
         }
     }
 
@@ -403,6 +444,15 @@ impl FoundryWindow {
             });
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
+            if ui
+                .button("Make italic")
+                .on_hover_text(
+                    "Copy this font as an italic, using the slant. This font stays as it is.",
+                )
+                .clicked()
+            {
+                self.open_italic(None);
+            }
             if ui.button("New style…").clicked() {
                 self.open_new_style();
             }
@@ -424,36 +474,77 @@ impl FoundryWindow {
         if let Some(mut form) = self.dialogs.new_style.take() {
             let mut keep = true;
             let mut make = false;
-            egui::Window::new("New style")
+            let mut other = false;
+            let source_italic = self.session.font().is_some_and(|font| font.style.italic);
+            let title = if form.kind == StyleKind::Italic {
+                "Make italic"
+            } else {
+                "New style"
+            };
+            egui::Window::new(title)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .collapsible(false)
                 .resizable(false)
                 .open(&mut keep)
                 .show(ctx, |ui| {
-                    ui.colored_label(
-                        color(MUTED),
-                        "Copies this font as another style of the family. Both stay open.",
-                    );
-                    egui::Grid::new("new_style").num_columns(2).show(ui, |ui| {
+                    ui.set_min_width(380.0);
+                    if form.kind == StyleKind::Italic {
+                        ui.colored_label(
+                            color(MUTED),
+                            "Copies this font into a new italic style. This font stays open and is not changed.",
+                        );
+                        if source_italic {
+                            ui.colored_label(
+                                color(MUTED),
+                                "This font is already italic. Zero copies the outlines. Another angle leans them again.",
+                            );
+                        }
+                        ui.add_space(6.0);
                         ui.label("Style name");
                         ui.text_edit_singleline(&mut form.style);
-                        ui.end_row();
-                        ui.label("Weight");
-                        ui.add(egui::DragValue::new(&mut form.weight).range(1..=1000));
-                        ui.end_row();
-                        ui.label("Italic");
-                        ui.checkbox(&mut form.italic, "");
-                        ui.end_row();
-                        ui.label("Slant");
-                        ui.add(egui::Slider::new(&mut form.slant, -20.0..=20.0).suffix("°"))
-                            .on_hover_text(
-                                "Leans every glyph to start an italic. 0 keeps the outlines.",
-                            );
-                        ui.end_row();
-                    });
-                    make = ui.button("Make style").clicked();
+                        ui.add(
+                            egui::Slider::new(&mut form.slant, -30.0..=30.0).text("Slant °"),
+                        );
+                        ui.colored_label(
+                            color(MUTED),
+                            "Leans every glyph about the baseline, the same way Effects → Slant does.",
+                        );
+                        ui.add_space(6.0);
+                        make = accent_button(ui, "Make italic").clicked();
+                        other = ui.button("Make a different style instead").clicked();
+                    } else {
+                        ui.colored_label(
+                            color(MUTED),
+                            "Copies this font as another style of the family. Both stay open.",
+                        );
+                        egui::Grid::new("new_style").num_columns(2).show(ui, |ui| {
+                            ui.label("Style name");
+                            ui.text_edit_singleline(&mut form.style);
+                            ui.end_row();
+                            ui.label("Weight");
+                            ui.add(egui::DragValue::new(&mut form.weight).range(1..=1000));
+                            ui.end_row();
+                            ui.label("Italic");
+                            if ui.checkbox(&mut form.italic, "").changed()
+                                && form.italic
+                                && form.slant == 0.0
+                            {
+                                form.slant = 12.0;
+                            }
+                            ui.end_row();
+                            ui.label("Slant");
+                            ui.add(egui::Slider::new(&mut form.slant, -30.0..=30.0).suffix("°"))
+                                .on_hover_text(
+                                    "Leans every glyph about the baseline. 0 keeps the outlines.",
+                                );
+                            ui.end_row();
+                        });
+                        make = ui.button("Make style").clicked();
+                    }
                 });
-            if make && !form.style.trim().is_empty() {
+            if other {
+                self.open_new_style();
+            } else if make && !form.style.trim().is_empty() {
                 self.derive_style(&form);
             } else if keep {
                 self.dialogs.new_style = Some(form);
@@ -549,6 +640,14 @@ impl FoundryWindow {
             }
         }
     }
+}
+
+fn accent_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    ui.scope(|ui| {
+        ui.visuals_mut().override_text_color = Some(color(INVERSE));
+        ui.add(egui::Button::new(label).fill(color(FOCUS)))
+    })
+    .inner
 }
 
 fn report_body(ui: &mut egui::Ui, data: &Value) {

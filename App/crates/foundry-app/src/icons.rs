@@ -19,6 +19,8 @@ const ICONS: &[(&str, &[u8])] = &[
         include_bytes!("../icons/arrow-rotate-right.svg"),
     ),
     ("circle", include_bytes!("../icons/circle.svg")),
+    ("guide", include_bytes!("../icons/guide.svg")),
+    ("lasso", include_bytes!("../icons/lasso.svg")),
     ("layout-cells", include_bytes!("../icons/layout-cells.svg")),
     (
         "location-arrow",

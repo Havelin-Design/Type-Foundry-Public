@@ -209,6 +209,7 @@ impl FoundryWindow {
         }
         let mut open = true;
         let mut apply = false;
+        let mut italic = false;
         egui::Window::new("Effects")
             .open(&mut open)
             .resizable(false)
@@ -220,6 +221,12 @@ impl FoundryWindow {
                     color(MUTED),
                     "The amber outline previews the result. Apply is one undo step.",
                 );
+                if self.effects.effect == Effect::Slant {
+                    ui.colored_label(
+                        color(MUTED),
+                        "Apply leans this font. Make italic style copies it at this angle and leaves this font as it is.",
+                    );
+                }
                 ui.horizontal(|ui| {
                     apply = ui.button("Apply").clicked();
                     if ui.button("Reset").clicked() {
@@ -231,10 +238,17 @@ impl FoundryWindow {
                             ..EffectsState::default()
                         };
                     }
+                    if self.effects.effect == Effect::Slant {
+                        italic = ui.button("Make italic style").clicked();
+                    }
                 });
             });
         self.effects.open = open;
-        if apply {
+        if italic {
+            let slant = self.effects.slant;
+            self.effects.open = false;
+            self.open_italic(Some(slant));
+        } else if apply {
             self.apply_effect();
         }
     }

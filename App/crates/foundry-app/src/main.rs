@@ -1,11 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 //! The Type Foundry window. It reads and changes the font only through `Session::execute`.
 
+mod align;
 mod app;
 mod canvas;
 mod effects;
 mod family_ui;
 mod grid;
+mod guides;
 mod icons;
 mod panels;
 mod preview;
@@ -23,6 +25,7 @@ pub const APP_TITLE: &str = "Type Foundry";
 pub const LAST_DIR_KEY: &str = "last_dir";
 pub const SETTINGS_KEY: &str = "settings";
 pub const COPY_KEY: &str = "preview_copy";
+pub const GUIDES_KEY: &str = "guides";
 
 /// One of the named chrome colors.
 pub fn color(hex: u32) -> Color32 {
@@ -62,6 +65,12 @@ fn main() -> eframe::Result {
                 .and_then(|storage| eframe::get_value(storage, COPY_KEY))
             {
                 window.copy = copy;
+            }
+            if let Some(guides) = cc
+                .storage
+                .and_then(|storage| eframe::get_value(storage, GUIDES_KEY))
+            {
+                window.guides = guides;
             }
             if let Some(path) = std::env::args().nth(1) {
                 window.open(PathBuf::from(path));

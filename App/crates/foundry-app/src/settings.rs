@@ -17,6 +17,25 @@ pub struct Settings {
     pub show_glyph_list: bool,
     pub show_inspector: bool,
     pub show_preview: bool,
+    /// Draw the previous and next glyphs beside the one being edited, with no handles.
+    pub onion_skin: bool,
+    /// User guides. They are not part of the font.
+    pub show_guides: bool,
+    /// Overview and editor share the main area.
+    pub split_main: bool,
+    /// Fraction of the main area given to the overview when split.
+    pub split_ratio: f32,
+    pub review_place: ReviewPlace,
+}
+
+/// Where the review sheet sits. A window can be moved and resized on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewPlace {
+    #[default]
+    Bottom,
+    Right,
+    Float,
 }
 
 impl Default for Settings {
@@ -33,6 +52,11 @@ impl Default for Settings {
             show_glyph_list: true,
             show_inspector: true,
             show_preview: true,
+            onion_skin: false,
+            show_guides: true,
+            split_main: false,
+            split_ratio: 0.42,
+            review_place: ReviewPlace::Bottom,
         }
     }
 }
@@ -56,7 +80,21 @@ impl Settings {
         ui.heading("Panels");
         ui.checkbox(&mut self.show_glyph_list, "Glyph list");
         ui.checkbox(&mut self.show_inspector, "Inspector");
-        ui.checkbox(&mut self.show_preview, "Preview pane");
+        ui.checkbox(&mut self.show_preview, "Review sheet");
+        ui.horizontal(|ui| {
+            ui.label("Place");
+            ui.selectable_value(&mut self.review_place, ReviewPlace::Bottom, "Bottom");
+            ui.selectable_value(&mut self.review_place, ReviewPlace::Right, "Right");
+            ui.selectable_value(&mut self.review_place, ReviewPlace::Float, "Window");
+        });
+        ui.checkbox(&mut self.split_main, "Overview and editor side by side");
+        ui.add_space(8.0);
+        ui.heading("Editor");
+        ui.checkbox(&mut self.onion_skin, "Onion skin")
+            .on_hover_text("The previous and next glyphs sit beside this one, outlines only.");
+        ui.checkbox(&mut self.show_guides, "Guides").on_hover_text(
+            "Lines you draw for yourself. They show on every glyph and are not part of the font.",
+        );
         ui.add_space(8.0);
         if ui.button("Reset to defaults").clicked() {
             *self = Self::default();

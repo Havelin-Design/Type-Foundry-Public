@@ -313,6 +313,34 @@ impl FoundryWindow {
         } else {
             ui.label(format!("{} points selected", handles.len()));
         }
+        if handles.len() >= 2 {
+            ui.add_space(4.0);
+            ui.label("Align");
+            ui.horizontal_wrapped(|ui| {
+                for (label, how) in [
+                    ("Left", crate::align::AlignTo::Left),
+                    ("Center", crate::align::AlignTo::CenterX),
+                    ("Right", crate::align::AlignTo::Right),
+                    ("Top", crate::align::AlignTo::Top),
+                    ("Middle", crate::align::AlignTo::Middle),
+                    ("Bottom", crate::align::AlignTo::Bottom),
+                ] {
+                    if ui.button(label).clicked() {
+                        self.align_selection(how);
+                    }
+                }
+            });
+            if handles.len() >= 3 {
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Distribute horizontally").clicked() {
+                        self.align_selection(crate::align::AlignTo::DistributeX);
+                    }
+                    if ui.button("Distribute vertically").clicked() {
+                        self.align_selection(crate::align::AlignTo::DistributeY);
+                    }
+                });
+            }
+        }
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
             if ui.button("Smooth").clicked() {

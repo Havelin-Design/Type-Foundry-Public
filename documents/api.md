@@ -69,6 +69,7 @@ These commands change the open font. Each one checks its input before it changes
 
 ```json
 {"op":"move_points","name":"a","points":[[0,1],[0,2]],"dx":10,"dy":0}
+{"op":"set_points","name":"a","points":[{"contour":0,"point":1,"x":10,"y":0},{"contour":0,"point":2,"x":10,"y":40}]}
 {"op":"insert_point","name":"a","contour":0,"index":3,"x":120,"y":40,"kind":"on","smooth":false}
 {"op":"split_segment","name":"a","contour":0,"point":4,"t":0.5}
 {"op":"delete_points","name":"a","points":[[0,2]]}
@@ -78,6 +79,7 @@ These commands change the open font. Each one checks its input before it changes
 {"op":"reverse_contour","name":"a","contour":0}
 ```
 
+- `set_points` puts each listed point at an absolute `(x, y)`. It is one undo step. A missing point or a non-finite coordinate changes nothing. The window uses it for Align.
 - `insert_point` puts a point before `index`. An `index` equal to the point count appends. `kind` defaults to `on`.
 - `split_segment` cuts the segment that ends at on-curve point `point`, at `t` from 0 to 1. A line gains one point. A quadratic or cubic is split exactly, so the shape does not change. The response gives the new on-curve point's index.
 - `delete_points` removes points. A contour left empty is removed.

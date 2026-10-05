@@ -51,6 +51,11 @@ pub enum Command {
         dx: f64,
         dy: f64,
     },
+    /// Absolute positions for several points of one glyph. One undo step.
+    SetPoints {
+        name: String,
+        points: Vec<PlacedPoint>,
+    },
     InsertPoint {
         name: String,
         contour: usize,
@@ -214,6 +219,15 @@ fn default_kind() -> PointKind {
     PointKind::On
 }
 
+/// One point set to an absolute position by `set_points`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlacedPoint {
+    pub contour: usize,
+    pub point: usize,
+    pub x: f64,
+    pub y: f64,
+}
+
 /// Undo steps kept per session. Older steps are dropped.
 pub const UNDO_LIMIT: usize = 200;
 
@@ -226,6 +240,7 @@ impl Command {
                 | Self::SetAdvance { .. }
                 | Self::MovePoint { .. }
                 | Self::MovePoints { .. }
+                | Self::SetPoints { .. }
                 | Self::InsertPoint { .. }
                 | Self::SplitSegment { .. }
                 | Self::DeletePoints { .. }
@@ -563,6 +578,15 @@ impl Session {
                 Ok(Some(
                     json!({ "name": name, "points": points, "dx": dx, "dy": dy }),
                 ))
+            }
+            Command::SetPoints { name, points } => {
+                let font = self.font_mut().ok_or(FoundryError::NoFont)?;
+                let places: Vec<(usize, usize, f64, f64)> = points
+                    .iter()
+                    .map(|point| (point.contour, point.point, point.x, point.y))
+                    .collect();
+                font.set_points(&name, &places)?;
+                Ok(Some(json!({ "name": name, "count": points.len() })))
             }
             Command::InsertPoint {
                 name,
@@ -1161,6 +1185,17 @@ mod tests {
         assert_eq!(first_x(&session), 35.0);
         assert_eq!(session.history(), (3, 0));
 
+        assert!(line(&mut session, r#"{"op":"undo"}"#).ok);
+        assert_eq!(first_x(&session), 30.0);
+        // Two points land in one undo step.
+        assert!(
+            line(
+                &mut session,
+                r#"{"op":"set_points","name":"H","points":[{"contour":0,"point":0,"x":3,"y":4},{"contour":0,"point":1,"x":9,"y":8}]}"#,
+            )
+            .ok
+        );
+        assert_eq!(first_x(&session), 3.0);
         assert!(line(&mut session, r#"{"op":"undo"}"#).ok);
         assert_eq!(first_x(&session), 30.0);
         assert!(line(&mut session, r#"{"op":"undo"}"#).ok);

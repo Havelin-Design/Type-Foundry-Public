@@ -3,8 +3,8 @@
 use eframe::egui::{self, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, Vec2};
 use foundry_app::palette::{AMBER, BONE, FOCUS, MUTED, SIGNAL};
 use foundry_app::{
-    Bounds, Handle, Outline, Pt, Viewport, flatten, handles_in_rect, hit_test, nearest_segment,
-    scanline_spans,
+    Bounds, Handle, Outline, Pt, Viewport, flatten, handles_in_polygon, handles_in_rect, hit_test,
+    nearest_segment, scanline_spans,
 };
 use serde_json::json;
 
@@ -37,13 +37,14 @@ impl FoundryWindow {
         // Fit once per glyph. When the canvas moves or resizes (a panel opening, say), keep the
         // zoom and move the view with the canvas's top-left corner, so a panel growing on the
         // right moves nothing under the pointer.
-        match &mut self.view {
-            None => self.view = Some(self.fit(&outline, rect)),
-            Some(view) if self.canvas_rect != rect && self.canvas_rect.is_positive() => {
-                let shift = rect.min - self.canvas_rect.min;
-                view.pan(f64::from(shift.x), f64::from(shift.y));
-            }
-            Some(_) => {}
+        if self.view.is_none() {
+            self.view = Some(self.fit(&outline, rect));
+        } else if self.canvas_rect != rect
+            && self.canvas_rect.is_positive()
+            && let Some(view) = &mut self.view
+        {
+            let shift = rect.min - self.canvas_rect.min;
+            view.pan(f64::from(shift.x), f64::from(shift.y));
         }
         self.canvas_rect = rect;
         let Some(mut view) = self.view else {
@@ -57,14 +58,19 @@ impl FoundryWindow {
 
         match self.tool {
             Tool::Select => self.select_tool(ui, &response, &view, &outline, &name, shift, alt),
+            Tool::Lasso => self.lasso_tool(ui, &response, &view, &outline, shift),
             Tool::Pen => self.pen_tool(&response, &view, &outline, &name, shift),
             Tool::Rectangle | Tool::Oval => self.shape_tool(ui, &response, &view, &name),
+            Tool::Guide => self.guide_tool(ui, &response, &view),
         }
         self.view = Some(view);
 
         // Paint from the session's current state, after this frame's edits.
         let outline = self.current_outline().unwrap_or(outline);
         let painter = painter.with_clip_rect(rect);
+        if self.settings.onion_skin {
+            self.paint_onion(&painter, &view, &outline);
+        }
         if self.settings.metrics {
             self.paint_metrics(&painter, &view, rect, outline.advance);
         }
@@ -86,16 +92,60 @@ impl FoundryWindow {
             paint_stroke(&painter, &view, &ghost, Stroke::new(1.5, color(AMBER)));
         }
         self.paint_shape_ghost(&painter, &view, rect);
+        self.paint_guides(&painter, &view, rect);
         self.paint_handles(&painter, &view, &outline);
         self.paint_overlays(ui, &painter, &view, &outline, pointer, alt);
     }
 
-    fn fit(&self, outline: &Outline, rect: Rect) -> Viewport {
-        Viewport::fit(
-            bounds_of(rect),
-            outline.bounds(self.descender, self.ascender),
-            FIT_MARGIN,
-        )
+    fn fit(&mut self, outline: &Outline, rect: Rect) -> Viewport {
+        let mut bounds = outline.bounds(self.descender, self.ascender);
+        if self.settings.onion_skin {
+            let (left, right) = self.onion_edges(outline);
+            bounds.min.x = bounds.min.x.min(left);
+            bounds.max.x = bounds.max.x.max(right);
+        }
+        Viewport::fit(bounds_of(rect), bounds, FIT_MARGIN)
+    }
+
+    /// Font x of the previous glyph's origin, and of the far side of the next glyph.
+    fn onion_edges(&mut self, outline: &Outline) -> (f64, f64) {
+        let (previous, next) = self.neighbor_names();
+        let left = previous
+            .and_then(|name| self.outline(&name))
+            .map(|other| -other.advance)
+            .unwrap_or(0.0);
+        let right = next
+            .and_then(|name| self.outline(&name))
+            .map(|other| outline.advance + other.advance)
+            .unwrap_or(outline.advance);
+        (left, right)
+    }
+
+    fn neighbor_names(&self) -> (Option<String>, Option<String>) {
+        let Some(current) = &self.current else {
+            return (None, None);
+        };
+        let Some(index) = self.glyphs.iter().position(|entry| &entry.name == current) else {
+            return (None, None);
+        };
+        let previous = index.checked_sub(1).map(|at| self.glyphs[at].name.clone());
+        let next = self.glyphs.get(index + 1).map(|entry| entry.name.clone());
+        (previous, next)
+    }
+
+    fn paint_onion(&mut self, painter: &egui::Painter, view: &Viewport, outline: &Outline) {
+        let (previous, next) = self.neighbor_names();
+        let stroke = Stroke::new(1.5, color(MUTED));
+        if let Some(name) = previous
+            && let Some(other) = self.outline(&name)
+        {
+            paint_stroke(painter, &shifted(view, -other.advance), &other, stroke);
+        }
+        if let Some(name) = next
+            && let Some(other) = self.outline(&name)
+        {
+            paint_stroke(painter, &shifted(view, outline.advance), &other, stroke);
+        }
     }
 
     /// Zoom, pan, and refit.
@@ -157,6 +207,9 @@ impl FoundryWindow {
         shift: bool,
         alt: bool,
     ) {
+        if self.interact_guides(ui, response, view) {
+            return;
+        }
         let primary = egui::PointerButton::Primary;
         // A drag begins past egui's threshold, so look at where the button went down.
         if response.drag_started_by(primary)
@@ -201,7 +254,11 @@ impl FoundryWindow {
                     }
                 }
                 Drag::Marquee { now, .. } => *now = pt(pointer),
-                Drag::Shape { .. } | Drag::None => {}
+                Drag::Shape { .. }
+                | Drag::None
+                | Drag::Lasso { .. }
+                | Drag::GuideMove { .. }
+                | Drag::GuideNew { .. } => {}
             }
         }
 
@@ -219,7 +276,11 @@ impl FoundryWindow {
                     self.selection.extend(picked);
                 }
                 Drag::Points { .. } => self.checkpoint(),
-                Drag::Shape { .. } | Drag::None => {}
+                Drag::Shape { .. }
+                | Drag::None
+                | Drag::Lasso { .. }
+                | Drag::GuideMove { .. }
+                | Drag::GuideNew { .. } => {}
             }
         }
 
@@ -227,6 +288,13 @@ impl FoundryWindow {
             && let Some(press) = response.interact_pointer_pos()
         {
             let press = pt(press);
+            if self.settings.show_guides {
+                let family = self.guide_family();
+                if let Some(index) = self.hit_guide(&family, view, press) {
+                    self.selected_guide = Some(index);
+                    return;
+                }
+            }
             match hit_test(outline, view, press, HIT_RADIUS) {
                 Some(handle) if shift => {
                     if !self.selection.remove(&handle) {
@@ -239,7 +307,10 @@ impl FoundryWindow {
                         self.split(name, hit.contour, hit.end, hit.t);
                     }
                 }
-                None if !shift => self.selection.clear(),
+                None if !shift => {
+                    self.selection.clear();
+                    self.selected_guide = None;
+                }
                 None => {}
             }
         }
@@ -270,6 +341,51 @@ impl FoundryWindow {
             let point = data["point"].as_u64().unwrap_or(0) as usize;
             self.selection = [Handle { contour, point }].into_iter().collect();
             self.status = ("Added a point".into(), Tone::Quiet);
+        }
+    }
+
+    fn lasso_tool(
+        &mut self,
+        ui: &egui::Ui,
+        response: &egui::Response,
+        view: &Viewport,
+        outline: &Outline,
+        shift: bool,
+    ) {
+        let primary = egui::PointerButton::Primary;
+        if response.drag_started_by(primary)
+            && let Some(press) = ui.input(|input| input.pointer.press_origin())
+        {
+            self.drag = Drag::Lasso {
+                points: vec![pt(press)],
+                additive: shift,
+            };
+        }
+        if response.dragged_by(primary)
+            && let Some(pointer) = response.interact_pointer_pos()
+            && let Drag::Lasso { points, .. } = &mut self.drag
+        {
+            let at = pt(pointer);
+            let far = points
+                .last()
+                .is_none_or(|last| (last.x - at.x).hypot(last.y - at.y) >= 2.0);
+            if far {
+                points.push(at);
+            }
+        }
+        if response.drag_stopped_by(primary)
+            && let Drag::Lasso { points, additive } = std::mem::replace(&mut self.drag, Drag::None)
+        {
+            if points.len() < 3 {
+                return;
+            }
+            let picked = handles_in_polygon(outline, view, &points);
+            let count = picked.len();
+            if !additive {
+                self.selection.clear();
+            }
+            self.selection.extend(picked);
+            self.status = (format!("{count} points in the lasso."), Tone::Quiet);
         }
     }
 
@@ -390,7 +506,7 @@ impl FoundryWindow {
         let points = match self.tool {
             Tool::Rectangle => crate::shapes::rectangle(start, now),
             Tool::Oval => crate::shapes::oval(start, now),
-            Tool::Select | Tool::Pen => None,
+            Tool::Select | Tool::Pen | Tool::Lasso | Tool::Guide => None,
         };
         let Some(points) = points else {
             self.status = ("The shape needs a little room.".into(), Tone::Quiet);
@@ -399,7 +515,7 @@ impl FoundryWindow {
         let label = match self.tool {
             Tool::Rectangle => "rectangle",
             Tool::Oval => "oval",
-            Tool::Select | Tool::Pen => "shape",
+            Tool::Select | Tool::Pen | Tool::Lasso | Tool::Guide => "shape",
         };
         if let Some(data) = self.edit_json(
             json!({
@@ -433,7 +549,7 @@ impl FoundryWindow {
         let points = match self.tool {
             Tool::Rectangle => crate::shapes::rectangle(start, now),
             Tool::Oval => crate::shapes::oval(start, now),
-            Tool::Select | Tool::Pen => None,
+            Tool::Select | Tool::Pen | Tool::Lasso | Tool::Guide => None,
         };
         if let Some(points) = points {
             let ghost = crate::shapes::outline_of(&points);
@@ -588,6 +704,15 @@ impl FoundryWindow {
                 egui::StrokeKind::Inside,
             );
         }
+        if let Drag::Lasso { points, .. } = &self.drag
+            && points.len() >= 2
+        {
+            let mut line: Vec<Pos2> = points.iter().copied().map(pos).collect();
+            if let Some(first) = line.first().copied() {
+                line.push(first);
+            }
+            painter.add(egui::Shape::line(line, Stroke::new(1.0, color(FOCUS))));
+        }
         let Some(pointer) = pointer else {
             return;
         };
@@ -616,7 +741,10 @@ impl FoundryWindow {
                 }
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
             }
-            Tool::Rectangle | Tool::Oval => {
+            Tool::Rectangle | Tool::Oval | Tool::Guide => {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+            }
+            Tool::Lasso => {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
             }
             Tool::Select => {
@@ -711,6 +839,12 @@ fn bounds_of(rect: Rect) -> Bounds {
         min: pt(rect.min),
         max: pt(rect.max),
     }
+}
+
+fn shifted(view: &Viewport, dx: f64) -> Viewport {
+    let mut view = *view;
+    view.origin.x += dx * view.scale;
+    view
 }
 
 pub fn pt(pos: Pos2) -> Pt {

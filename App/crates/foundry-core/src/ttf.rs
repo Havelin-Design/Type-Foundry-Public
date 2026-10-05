@@ -15,6 +15,9 @@ use crate::font::{Contour, Font, Glyph, Point, PointKind};
 const MAC_EPOCH_OFFSET: u64 = 2_082_844_800;
 const QUAD_ERROR: f64 = 1.0;
 const MAX_SPLIT: u32 = 8;
+/// `head.fontRevision`, 16.16 fixed. Name ID 5 repeats it as `Version 1.000`.
+const FONT_REVISION: u32 = 0x0001_0000;
+const VERSION_STRING: &str = "Version 1.000";
 
 pub(crate) fn is_ttf_path(path: &Path) -> bool {
     path.extension()
@@ -42,6 +45,10 @@ pub(crate) fn write_ttf(font: &Font) -> Result<Vec<u8>, FoundryError> {
     for glyph in &encoded {
         push_u32(&mut loca, u32::try_from(glyf.len()).unwrap_or(u32::MAX));
         glyf.extend_from_slice(&glyph.bytes);
+        // A glyph starts on a word boundary, so every loca offset stays even.
+        if glyf.len() % 2 == 1 {
+            glyf.push(0);
+        }
     }
     push_u32(&mut loca, u32::try_from(glyf.len()).unwrap_or(u32::MAX));
 
@@ -480,7 +487,7 @@ fn head_table(font: &Font, bounds: Bounds, now: u64) -> Vec<u8> {
     let mut bytes = Vec::new();
     push_u16(&mut bytes, 1);
     push_u16(&mut bytes, 0);
-    push_u32(&mut bytes, 0x0001_0000);
+    push_u32(&mut bytes, FONT_REVISION);
     push_u32(&mut bytes, 0);
     push_u32(&mut bytes, 0x5F0F_3CF5);
     push_u16(&mut bytes, 0x000B);
@@ -589,23 +596,30 @@ fn maxp_table(glyphs: &[BuiltGlyph]) -> Vec<u8> {
 
 /// Legacy family and style (IDs 1 and 2) group up to four styles in older apps. The typographic
 /// pair (IDs 16 and 17) carries the real family and style, so every style lands in one family.
+///
+/// ID 3 is the unique font identifier. Windows Font Viewer and GDI reject a TrueType file that
+/// does not have one, even when every outline is valid. ID 5 is the version string.
 fn name_table(font: &Font) -> Vec<u8> {
     let (legacy_family, legacy_style) = font.legacy_names();
     let family = utf16_be(&legacy_family);
     let style = utf16_be(&legacy_style);
+    let unique = utf16_be(&format!("Havelin: {}", font.full_name()));
     let full = utf16_be(&font.full_name());
+    let version = utf16_be(VERSION_STRING);
     let postscript = utf16_be(&postscript_name(&font.file_stem()));
     let typographic_family = utf16_be(&font.style.family);
     let typographic_style = utf16_be(&font.style.name);
     let strings = [
         &family,
         &style,
+        &unique,
         &full,
+        &version,
         &postscript,
         &typographic_family,
         &typographic_style,
     ];
-    let ids = [1u16, 2, 4, 6, 16, 17];
+    let ids = [1u16, 2, 3, 4, 5, 6, 16, 17];
     let mut bytes = Vec::new();
     push_u16(&mut bytes, 0);
     push_u16(&mut bytes, u16::try_from(ids.len()).unwrap_or(0));
@@ -886,6 +900,73 @@ fn pad4(data: &[u8]) -> Vec<u8> {
     padded
 }
 
+#[cfg(test)]
+fn loca_offsets(bytes: &[u8]) -> Vec<u32> {
+    let count = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
+    let mut loca = None;
+    let mut head = None;
+    let mut maxp = None;
+    for index in 0..count {
+        let rec = 12 + index * 16;
+        let tag = &bytes[rec..rec + 4];
+        let offset = u32::from_be_bytes(bytes[rec + 8..rec + 12].try_into().unwrap()) as usize;
+        let length = u32::from_be_bytes(bytes[rec + 12..rec + 16].try_into().unwrap()) as usize;
+        let table = &bytes[offset..offset + length];
+        match tag {
+            b"loca" => loca = Some(table),
+            b"head" => head = Some(table),
+            b"maxp" => maxp = Some(table),
+            _ => {}
+        }
+    }
+    let head = head.unwrap();
+    let maxp = maxp.unwrap();
+    let loca = loca.unwrap();
+    let long = i16::from_be_bytes([head[50], head[51]]) == 1;
+    let glyphs = u16::from_be_bytes([maxp[4], maxp[5]]) as usize;
+    (0..=glyphs)
+        .map(|index| {
+            if long {
+                let at = index * 4;
+                u32::from_be_bytes(loca[at..at + 4].try_into().unwrap())
+            } else {
+                let at = index * 2;
+                u32::from(u16::from_be_bytes(loca[at..at + 2].try_into().unwrap())) * 2
+            }
+        })
+        .collect()
+}
+
+#[cfg(all(test, windows))]
+fn windows_accepts(path: &std::path::Path) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+
+    #[link(name = "gdi32")]
+    unsafe extern "system" {
+        fn AddFontResourceExW(
+            name: *const u16,
+            flags: u32,
+            reserved: *mut core::ffi::c_void,
+        ) -> i32;
+        fn RemoveFontResourceExW(
+            name: *const u16,
+            flags: u32,
+            reserved: *mut core::ffi::c_void,
+        ) -> i32;
+    }
+
+    let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+    wide.push(0);
+    const PRIVATE: u32 = 0x10;
+    unsafe {
+        let added = AddFontResourceExW(wide.as_ptr(), PRIVATE, core::ptr::null_mut());
+        if added > 0 {
+            RemoveFontResourceExW(wide.as_ptr(), PRIVATE, core::ptr::null_mut());
+        }
+        added > 0
+    }
+}
+
 fn push_u16(bytes: &mut Vec<u8>, value: u16) {
     bytes.extend(value.to_be_bytes());
 }
@@ -995,6 +1076,27 @@ mod tests {
         font.save(&path).unwrap();
         let bytes = fs::read(&path).unwrap();
         let face = Face::parse(&bytes, 0).unwrap();
+        assert_eq!(checksum(&bytes), 0xB1B0_AFBA);
+        assert!(loca_offsets(&bytes).iter().all(|offset| offset % 2 == 0));
+        let mut saw_unique = false;
+        let mut saw_version = false;
+        for name in face.names() {
+            if name.name_id == ttf_parser::name_id::UNIQUE_ID {
+                saw_unique = true;
+            }
+            if name.name_id == ttf_parser::name_id::VERSION {
+                let text = name.to_string().unwrap();
+                assert!(text.starts_with("Version "), "{text}");
+                saw_version = true;
+            }
+        }
+        assert!(saw_unique, "Windows rejects a font with no unique name");
+        assert!(saw_version);
+        #[cfg(windows)]
+        assert!(
+            windows_accepts(&path),
+            "Windows Font Viewer would reject this file"
+        );
         assert_eq!(face.number_of_glyphs(), 2);
         assert_eq!(face.units_per_em(), 1000);
         let id = face.glyph_index('H').unwrap();
@@ -1016,6 +1118,27 @@ mod tests {
             );
         }
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn an_odd_glyph_still_lands_on_an_even_offset() {
+        let mut font = Font::new("Odd", 1000).unwrap();
+        font.insert_glyph(Glyph {
+            name: "l".into(),
+            unicode: Some(u32::from('l')),
+            advance: 200.0,
+            contours: vec![Contour {
+                closed: true,
+                points: vec![on(40.0, 0.0), on(80.0, 30.0)],
+            }],
+        })
+        .unwrap();
+        let bytes = write_ttf(&font).unwrap();
+        let offsets = loca_offsets(&bytes);
+        assert!(offsets.iter().all(|offset| offset % 2 == 0), "{offsets:?}");
+        let end = offsets.last().copied().unwrap();
+        assert_eq!(end % 2, 0);
+        assert!(end > 0, "{offsets:?}");
     }
 
     #[test]

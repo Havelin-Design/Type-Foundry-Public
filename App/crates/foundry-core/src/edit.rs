@@ -57,6 +57,26 @@ impl Font {
         Ok(())
     }
 
+    /// Move several points of one glyph to absolute positions. One call, so one undo step.
+    /// A bad reference or a non-finite coordinate changes nothing.
+    pub fn set_points(
+        &mut self,
+        name: &str,
+        places: &[(usize, usize, f64, f64)],
+    ) -> Result<(), FoundryError> {
+        let coords: Vec<f64> = places.iter().flat_map(|(_, _, x, y)| [*x, *y]).collect();
+        finite(&coords)?;
+        let refs: Vec<(usize, usize)> = places.iter().map(|(c, p, _, _)| (*c, *p)).collect();
+        let glyph = self.glyph_or_err(name)?;
+        check_refs(glyph, &refs)?;
+        for (contour, point, x, y) in places {
+            let target = &mut glyph.contours[*contour].points[*point];
+            target.x = *x;
+            target.y = *y;
+        }
+        Ok(())
+    }
+
     /// Insert a point before `index`. An `index` equal to the point count appends.
     pub fn insert_point(
         &mut self,
@@ -573,6 +593,25 @@ mod tests {
         let before = font.clone();
         assert!(font.move_points("a", &[(0, 9)], 1.0, 1.0).is_err());
         assert_eq!(font, before, "a bad reference changes nothing");
+    }
+
+    #[test]
+    fn sets_several_points_or_changes_nothing() {
+        let mut font = font_with(vec![square()]);
+        font.set_points("a", &[(0, 0, 4.0, 8.0), (0, 2, 40.0, 70.0)])
+            .unwrap();
+        let points = xy(&font);
+        assert_eq!((points[0].0, points[0].1), (4.0, 8.0));
+        assert_eq!((points[2].0, points[2].1), (40.0, 70.0));
+        assert_eq!((points[1].0, points[1].1), (100.0, 0.0));
+        let before = font.clone();
+        assert!(
+            font.set_points("a", &[(0, 1, 1.0, 1.0), (0, 9, 2.0, 2.0)])
+                .is_err()
+        );
+        assert_eq!(font, before, "a bad reference changes nothing");
+        assert!(font.set_points("a", &[(0, 1, f64::NAN, 1.0)]).is_err());
+        assert_eq!(font, before, "a non-finite coordinate changes nothing");
     }
 
     #[test]

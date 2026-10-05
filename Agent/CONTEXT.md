@@ -33,7 +33,7 @@ PM notes live here. Product code lives in `App/`. Plugins, the CLI, and agents s
 
 ## How a font is stored
 
-The working file is JSON, `format` `typefoundry.font`, `version` 1. A glyph is contours of `on` and `off` points, an advance, and an optional unicode. `open`, `save`, `check`, and `blend` also read and write a `.ufo` directory through the same commands. `open` also reads a Three.js typeface JSON file, a webfontjson file, `.ttf`, `.otf`, `.ttc`, `.otc`, and WOFF 1 (`.woff`, unpacked into an sfnt). WOFF2 and Embedded OpenType are refused. Saving over `.otf`, `.ttc`, `.otc`, `.woff`, `.woff2`, or `.eot` is refused. UFO import keeps the default layer, sorts glyph names, and keeps the first Unicode value. Anchors, guidelines, kerning, groups, and lib data are ignored. Components, images, and implied-on qcurves are refused. `save` to a `.ttf` path writes an installable TrueType file: cubics become quadratics, open contours are closed with a straight edge, and Unicode outside the Basic Multilingual Plane is refused.
+The working file is JSON, `format` `typefoundry.font`, `version` 1. A glyph is contours of `on` and `off` points, an advance, and an optional unicode. `open`, `save`, `check`, and `blend` also read and write a `.ufo` directory through the same commands. `open` also reads a Three.js typeface JSON file, a webfontjson file, `.ttf`, `.otf`, `.ttc`, `.otc`, and WOFF 1 (`.woff`, unpacked into an sfnt). WOFF2 and Embedded OpenType are refused. Saving over `.otf`, `.ttc`, `.otc`, `.woff`, `.woff2`, or `.eot` is refused. UFO import keeps the default layer, sorts glyph names, and keeps the first Unicode value. Anchors, guidelines, kerning, groups, and lib data are ignored. Components, images, and implied-on qcurves are refused. `save` to a `.ttf` path writes an installable TrueType file: cubics become quadratics, open contours are closed with a straight edge, and Unicode outside the Basic Multilingual Plane is refused. The name table includes a unique identifier (name ID 3) and `Version 1.000` (name ID 5). Windows Font Viewer rejects a file that omits the unique name. Glyph data is padded so every `loca` offset is even.
 
 ## How blend works
 
@@ -62,6 +62,45 @@ Frozen for now:
 - Cargo target directory stays on `C:`.
 
 ## Session log
+
+### 2026-10-04 — Vostok Serif v3 italic
+
+- Focus: take the installed v3 drawings and add a 10° italic so Windows shows Regular and Italic as one family.
+- Used the debug `foundry` session: `open` `VostokSerif-v3.ttf`, `derive_style` style Italic slant 10, `family_check` ready with no issues, `export_family` TTF. The source font was not changed. Italic angle is −10. The shear is `tan(10°)`, the same math as Effects → Slant.
+- Files: `T:\troy-freeform\Fonts\Vostok-Serif\VostokSerifv3-Regular.ttf` and `VostokSerifv3-Italic.ttf`. On H and o, Y stayed put and X matched the slant within half a unit, which is the TrueType integer rounding. Advances stayed put.
+- Installed for this user. GDI accepted both files. One private collection reported a single family with Regular and Italic. After install, Windows lists `Vostok Serif v3` and both `FontStyle.Regular` and `FontStyle.Italic` construct. The earlier single-file v3 install was replaced. The older `Vostok Serif` Regular install is still there. Not committed.
+
+### 2026-10-04 — Vostok Serif v3 installs
+
+- Focus: Troy saved edits as `VostokSerif-Regular3.ttf` and Windows would not install it.
+- Cause: that file, plus `VostokSerif-Regular_v2.ttf` and `Vostok-Serif.ttf`, was written by the release app from 7:07 PM. Its name table has four records and no name ID 3. GDI `AddFontResourceEx` returned 0. The family string had also stacked on each save, so the open name was `Vostok Serif Regular Regular 3`.
+- The edited outlines were re-exported with the fixed writer to `T:\troy-freeform\Fonts\Vostok-Serif\VostokSerif-v3.ttf`. Family `Vostok Serif v3`, style Regular. Name ID 3 is `Havelin: Vostok Serif v3 Regular`. Every glyph matched the rejected Regular3 file. `Regular3.ttf` was left in place.
+- Installed for this user at `C:\Users\Troy Havelin\AppData\Local\Microsoft\Windows\Fonts\VostokSerif-v3.ttf`. Registry name `Vostok Serif v3 Regular (TrueType)`. `AddFontResource` returned 1. The earlier `Vostok Serif Regular` install was left alone.
+- The Start menu exe is still the 7:07 PM build, and that process (PID 25212) was left running. The next Save As from that window will fail the same way until the release exe is rebuilt.
+
+### 2026-10-04 — Make italic, guides, and a split workspace
+
+- Focus: with a font open, making an italic family member had to be obvious, and the editor needed guides, onion skin, a split view, a movable review sheet, a lasso, and point alignment.
+- Italic: the tab row leads with Make italic. File > Make italic (Ctrl+Shift+I), the inspector, and Effects → Slant → Make italic style open the same dialog. The slant slider is −30° to 30°, default 12°, the same lean as Effects → Slant. It copies the font with `derive_style`. The open font is not changed. File > New style (Ctrl+Shift+D) is the other member, such as Bold.
+- Guides: the Guide tool (G) drags a horizontal or vertical line. Guides are stored with the view, keyed by family name, shown on every glyph, and never written into the font. View > Guides hides them. Delete removes the selected guide when no points are selected.
+- Onion skin: View > Onion skin draws the previous and next glyphs beside the current one, MUTED outlines, no handles. Turning it on refits the view.
+- Workspace: toolbar Split, or View > Overview and editor, shows the glyph grid and the editor together. The bar between them drags. The review sheet can sit on the bottom, on the right, or in its own window.
+- Lasso (L) selects the points inside a loop. Shift adds. Align (Edit > Align points, and the inspector) is one `set_points` command, so one undo. Top is the greater font Y.
+- Code: `App/crates/foundry-app/src/family_ui.rs`, `effects.rs`, `app.rs`, `canvas.rs`, `guides.rs`, `align.rs`, `settings.rs`, `panels.rs`, `icons/guide.svg`, `icons/lasso.svg`. `set_points` is in `foundry-core` `edit.rs`, `foundry-api`, and the MCP tool `points_set`. MCP is 19 tools. `documents/api.md` and `Design/README.md` match the window.
+- Validation: the Windows check passed, 86 tests, 1 ignored regen test, clippy clean. New tests cover `set_points`, one undo for two points, the lasso hit test, guide hit testing, and alignment. The debug window opened with the title Type Foundry and was closed. The new controls were not clicked.
+- Not committed. Not pushed. The TrueType install fix is still uncommitted on the same tree. Local `main` is the family merge `f9883a3`.
+
+### Correction - window smoke
+
+- The debug window was not opened. `typefoundry.exe` PID 25212 was already running from `C:\Users\Troy Havelin\AppData\Local\typefoundry-target\release\typefoundry.exe`. That process was left alone. The new editor is compiled into the debug build. The Start menu shortcut still launches the release exe, which does not include Make italic, guides, onion skin, the split, the movable review sheet, the lasso, or alignment. The new controls were not clicked.
+
+### 2026-10-04 — Windows can install an exported TTF
+
+- Focus: Font Viewer rejected `T:\troy-freeform\Fonts\Vostok-Serif\SVG.ttf`.
+- Cause: the name table had no unique font identifier (name ID 3). The outlines, the checksum, and DirectWrite were fine. GDI and Font Viewer refuse a TrueType file without that record. Name ID 5 is `Version 1.000`. Glyphs are padded so `loca` offsets are even.
+- Code: `App/crates/foundry-core/src/ttf.rs`. Save As `.ttf` and Export family both use that writer.
+- Validation: the Windows check passed, 81 tests, 1 ignored regen test, clippy clean. The square test asks GDI to accept the file. Font Viewer opened the re-exported Vostok as `Vostok Serif Regular (TrueType)` with an Install button, then the process was closed.
+- File: `T:\troy-freeform\Fonts\Vostok-Serif\VostokSerif-Regular.ttf`. `SVG.ttf` was left in place. Not committed. Not pushed. Local `main` is the family merge `f9883a3` plus this uncommitted fix.
 
 ### 2026-10-05 — Several fonts and families (cloud)
 

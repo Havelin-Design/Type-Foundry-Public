@@ -114,6 +114,7 @@ impl Server {
             "font_close" => "close_font",
             "style_set" => "set_style",
             "style_derive" => "derive_style",
+            "points_set" => "set_points",
             "family_check" => "family_check",
             "family_open" => "open_family",
             "family_save" => "save_family",
@@ -381,6 +382,30 @@ fn tool_list() -> Value {
             }
         },
         {
+            "name": "points_set",
+            "description": "Move several points of one glyph to absolute positions, as one undo step. Used for alignment.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "points": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "contour": { "type": "integer" },
+                                "point": { "type": "integer" },
+                                "x": { "type": "number" },
+                                "y": { "type": "number" }
+                            },
+                            "required": ["contour", "point", "x", "y"]
+                        }
+                    }
+                },
+                "required": ["name", "points"]
+            }
+        },
+        {
             "name": "family_check",
             "description": "Check the open styles of the active font's family: matching family names, distinct styles, units per em, line metrics, and glyph coverage.",
             "inputSchema": none
@@ -498,7 +523,8 @@ mod tests {
             .map(|tool| tool["name"].as_str().unwrap())
             .collect();
         assert!(names.contains(&"point_move"));
-        assert_eq!(names.len(), 18);
+        assert!(names.contains(&"points_set"));
+        assert_eq!(names.len(), 19);
         assert!(names.contains(&"style_derive"));
         assert!(!names.iter().any(|name| name.contains("prompt")));
     }
