@@ -58,9 +58,9 @@ pub(crate) fn write_ttf(font: &Font) -> Result<Vec<u8>, FoundryError> {
     tables.insert(*b"hmtx", hmtx_table(&advances, &lsbs));
     tables.insert(*b"loca", loca);
     tables.insert(*b"maxp", maxp_table(&glyphs));
-    tables.insert(*b"name", name_table(&font.name));
+    tables.insert(*b"name", name_table(font));
     tables.insert(*b"OS/2", os2_table(font, &glyphs, &codes, bounds));
-    tables.insert(*b"post", post_table(&glyphs));
+    tables.insert(*b"post", post_table(&glyphs, font.style.italic_angle));
 
     assemble(tables)
 }
@@ -491,7 +491,8 @@ fn head_table(font: &Font, bounds: Bounds, now: u64) -> Vec<u8> {
     push_i16(&mut bytes, bounds.y_min);
     push_i16(&mut bytes, bounds.x_max);
     push_i16(&mut bytes, bounds.y_max);
-    push_u16(&mut bytes, 0);
+    let (bold, italic) = style_bits(font);
+    push_u16(&mut bytes, u16::from(bold) | (u16::from(italic) << 1));
     push_u16(&mut bytes, 8);
     push_i16(&mut bytes, 2);
     push_i16(&mut bytes, 1);
@@ -528,8 +529,15 @@ fn hhea_table(font: &Font, glyphs: &[BuiltGlyph], bounds: Bounds) -> Vec<u8> {
     push_i16(&mut bytes, min_lsb);
     push_i16(&mut bytes, min_rsb);
     push_i16(&mut bytes, bounds.x_max);
-    push_i16(&mut bytes, 1);
-    push_i16(&mut bytes, 0);
+    // Caret slope: upright is rise 1, run 0. An italic leans with its angle.
+    let (rise, run) = if font.style.italic_angle == 0.0 {
+        (1, 0)
+    } else {
+        let run = (-font.style.italic_angle).to_radians().tan() * 1000.0;
+        (1000, run.round().clamp(-32768.0, 32767.0) as i16)
+    };
+    push_i16(&mut bytes, rise);
+    push_i16(&mut bytes, run);
     push_i16(&mut bytes, 0);
     push_i16(&mut bytes, 0);
     push_i16(&mut bytes, 0);
@@ -579,13 +587,25 @@ fn maxp_table(glyphs: &[BuiltGlyph]) -> Vec<u8> {
     bytes
 }
 
-fn name_table(name: &str) -> Vec<u8> {
-    let family = utf16_be(name);
-    let style = utf16_be("Regular");
-    let full = utf16_be(name);
-    let postscript = utf16_be(&postscript_name(name));
-    let strings = [&family, &style, &full, &postscript];
-    let ids = [1u16, 2, 4, 6];
+/// Legacy family and style (IDs 1 and 2) group up to four styles in older apps. The typographic
+/// pair (IDs 16 and 17) carries the real family and style, so every style lands in one family.
+fn name_table(font: &Font) -> Vec<u8> {
+    let (legacy_family, legacy_style) = font.legacy_names();
+    let family = utf16_be(&legacy_family);
+    let style = utf16_be(&legacy_style);
+    let full = utf16_be(&font.full_name());
+    let postscript = utf16_be(&postscript_name(&font.file_stem()));
+    let typographic_family = utf16_be(&font.style.family);
+    let typographic_style = utf16_be(&font.style.name);
+    let strings = [
+        &family,
+        &style,
+        &full,
+        &postscript,
+        &typographic_family,
+        &typographic_style,
+    ];
+    let ids = [1u16, 2, 4, 6, 16, 17];
     let mut bytes = Vec::new();
     push_u16(&mut bytes, 0);
     push_u16(&mut bytes, u16::try_from(ids.len()).unwrap_or(0));
@@ -632,7 +652,7 @@ fn os2_table(font: &Font, glyphs: &[BuiltGlyph], codes: &[(u32, u16)], bounds: B
     let mut bytes = vec![0; 96];
     write_u16(&mut bytes, 0, 4);
     write_i16(&mut bytes, 2, i16::try_from(average).unwrap_or(0));
-    write_u16(&mut bytes, 4, 400);
+    write_u16(&mut bytes, 4, font.style.weight);
     write_u16(&mut bytes, 6, 5);
     write_i16(&mut bytes, 10, fit_metric(650.0 * scale));
     write_i16(&mut bytes, 12, fit_metric(700.0 * scale));
@@ -643,7 +663,11 @@ fn os2_table(font: &Font, glyphs: &[BuiltGlyph], codes: &[(u32, u16)], bounds: B
     write_i16(&mut bytes, 26, fit_metric(50.0 * scale));
     write_i16(&mut bytes, 28, fit_metric(300.0 * scale));
     bytes[58..62].copy_from_slice(b"HAVL");
-    write_u16(&mut bytes, 62, 0x00C0);
+    // fsSelection: italic is bit 0, bold bit 5, regular bit 6. Bit 7 says to use typo metrics.
+    let (bold, italic) = style_bits(font);
+    let regular = !bold && !italic;
+    let selection = 0x0080 | u16::from(italic) | (u16::from(bold) << 5) | (u16::from(regular) << 6);
+    write_u16(&mut bytes, 62, selection);
     write_u16(&mut bytes, 64, first);
     write_u16(&mut bytes, 66, last);
     write_i16(&mut bytes, 68, ascender);
@@ -658,7 +682,7 @@ fn os2_table(font: &Font, glyphs: &[BuiltGlyph], codes: &[(u32, u16)], bounds: B
 
 /// Format 2 carries glyph names, so a saved `.ttf` opens with the same names. When a name
 /// cannot be stored (non-ASCII or longer than 63 bytes), format 3 is written with no names.
-fn post_table(glyphs: &[BuiltGlyph]) -> Vec<u8> {
+fn post_table(glyphs: &[BuiltGlyph], italic_angle: f64) -> Vec<u8> {
     let storable = glyphs.iter().all(|glyph| {
         !glyph.name.is_empty()
             && glyph.name.len() <= 63
@@ -666,7 +690,11 @@ fn post_table(glyphs: &[BuiltGlyph]) -> Vec<u8> {
     });
     let mut bytes = Vec::new();
     push_u32(&mut bytes, if storable { 0x0002_0000 } else { 0x0003_0000 });
-    push_u32(&mut bytes, 0);
+    // italicAngle is a 16.16 fixed-point number.
+    let fixed = (italic_angle * 65536.0)
+        .round()
+        .clamp(f64::from(i32::MIN), f64::from(i32::MAX));
+    push_u32(&mut bytes, (fixed as i32) as u32);
     push_i16(&mut bytes, -100);
     push_i16(&mut bytes, 50);
     push_u32(&mut bytes, 0);
@@ -792,6 +820,11 @@ fn fit_metric(value: f64) -> i16 {
     } else {
         rounded as i16
     }
+}
+
+/// Bold and italic as the legacy style links them: bold only at weight 700.
+fn style_bits(font: &Font) -> (bool, bool) {
+    (font.style.weight == 700, font.style.italic)
 }
 
 fn postscript_name(name: &str) -> String {

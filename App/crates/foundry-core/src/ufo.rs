@@ -7,6 +7,7 @@
 use std::path::Path;
 
 use norad::fontinfo::NonNegativeIntegerOrFloat;
+use norad::fontinfo::StyleMapStyle;
 use norad::{ContourPoint, PointType};
 
 use crate::error::FoundryError;
@@ -24,6 +25,7 @@ pub(crate) fn load_ufo(path: &Path) -> Result<Font, FoundryError> {
     let upm = read_upm(info)?;
     let mut font = Font::new(font_name(info, path), upm)?;
     apply_metrics(&mut font, info)?;
+    apply_style(&mut font, info);
     let mut glyphs: Vec<&norad::Glyph> = ufo.default_layer().iter().collect();
     glyphs.sort_by(|left, right| left.name().as_str().cmp(right.name().as_str()));
     for glyph in glyphs {
@@ -34,7 +36,18 @@ pub(crate) fn load_ufo(path: &Path) -> Result<Font, FoundryError> {
 
 pub(crate) fn save_ufo(font: &Font, path: &Path) -> Result<(), FoundryError> {
     let mut ufo = norad::Font::new();
-    ufo.font_info.family_name = Some(font.name.clone());
+    ufo.font_info.family_name = Some(font.style.family.clone());
+    ufo.font_info.style_name = Some(font.style.name.clone());
+    let (legacy_family, legacy_style) = font.legacy_names();
+    ufo.font_info.style_map_family_name = Some(legacy_family);
+    ufo.font_info.style_map_style_name = Some(match legacy_style.as_str() {
+        "Bold Italic" => StyleMapStyle::BoldItalic,
+        "Bold" => StyleMapStyle::Bold,
+        "Italic" => StyleMapStyle::Italic,
+        _ => StyleMapStyle::Regular,
+    });
+    ufo.font_info.open_type_os2_weight_class = Some(u32::from(font.style.weight));
+    ufo.font_info.italic_angle = Some(font.style.italic_angle);
     ufo.font_info.units_per_em = Some(NonNegativeIntegerOrFloat::from(u32::from(font.upm)));
     ufo.font_info.ascender = Some(font.metrics.ascender);
     ufo.font_info.cap_height = Some(font.metrics.cap_height);
@@ -86,6 +99,36 @@ fn font_name(info: &norad::FontInfo, path: &Path) -> String {
             .unwrap_or("Untitled")
             .to_string(),
     }
+}
+
+/// Family, style, weight, and italic from fontinfo. Missing values keep the Regular defaults.
+fn apply_style(font: &mut Font, info: &norad::FontInfo) {
+    let clean = |text: &Option<String>| {
+        text.as_deref()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
+    };
+    if let Some(family) = clean(&info.family_name) {
+        font.style.family = family;
+    }
+    if let Some(style) = clean(&info.style_name) {
+        font.style.name = style;
+    }
+    if let Some(weight) = info.open_type_os2_weight_class {
+        font.style.weight = u16::try_from(weight.clamp(1, 1000)).unwrap_or(400);
+    }
+    if let Some(angle) = info.italic_angle.filter(|angle| angle.is_finite()) {
+        font.style.italic_angle = angle;
+    }
+    let mapped_italic = matches!(
+        info.style_map_style_name,
+        Some(StyleMapStyle::Italic | StyleMapStyle::BoldItalic)
+    );
+    font.style.italic = mapped_italic
+        || font.style.italic_angle != 0.0
+        || font.style.name.to_lowercase().contains("italic")
+        || font.style.name.to_lowercase().contains("oblique");
 }
 
 fn apply_metrics(font: &mut Font, info: &norad::FontInfo) -> Result<(), FoundryError> {
@@ -392,7 +435,10 @@ mod tests {
         let blended = blend_fonts(&left, &right, 0.5).unwrap();
         blended.save(&mid).unwrap();
         let opened = Font::load(&mid).unwrap();
-        assert_eq!(opened.name, "Narrow / Wide @ 0.5");
+        // UFO stores family and style apart; the blend of two families is its own family.
+        assert_eq!(opened.style.family, "Narrow / Wide @ 0.5");
+        assert_eq!(opened.style.name, "Regular");
+        assert_eq!(opened.name, "Narrow / Wide @ 0.5 Regular");
         assert_eq!(opened.glyph("H").unwrap().advance, 600.0);
         assert_eq!(opened.glyph("H").unwrap().contours[0].points[0].x, 90.0);
         assert_eq!(opened.glyph("H").unwrap().unicode, Some('H' as u32));

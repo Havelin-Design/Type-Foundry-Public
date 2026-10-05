@@ -18,6 +18,8 @@ pub enum FoundryError {
     Ttf(String),
     Import(String),
     Edit(String),
+    Style(String),
+    Family(String),
     Io(String),
     Json(String),
 }
@@ -45,6 +47,8 @@ impl fmt::Display for FoundryError {
             Self::Ttf(message) => write!(f, "{message}"),
             Self::Import(message) => write!(f, "{message}"),
             Self::Edit(message) => write!(f, "{message}"),
+            Self::Style(message) => write!(f, "{message}"),
+            Self::Family(message) => write!(f, "{message}"),
             Self::Io(message) => write!(f, "{message}"),
             Self::Json(message) => write!(f, "{message}"),
         }

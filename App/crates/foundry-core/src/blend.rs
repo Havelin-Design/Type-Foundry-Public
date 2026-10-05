@@ -145,6 +145,23 @@ fn interpolate(a: &Font, b: &Font, t: f64) -> Font {
         name: format!("{} / {} @ {}", a.name, b.name, format_t(t)),
         upm: a.upm,
         metrics: interpolate_metrics(&a.metrics, &b.metrics, t),
+        style: crate::Style {
+            family: if a.style.family == b.style.family {
+                a.style.family.clone()
+            } else {
+                format!("{} / {} @ {}", a.name, b.name, format_t(t))
+            },
+            name: if a.style.name == b.style.name {
+                a.style.name.clone()
+            } else {
+                format!("{} / {} @ {}", a.style.name, b.style.name, format_t(t))
+            },
+            weight: lerp(f64::from(a.style.weight), f64::from(b.style.weight), t)
+                .round()
+                .clamp(1.0, 1000.0) as u16,
+            italic: a.style.italic,
+            italic_angle: lerp(a.style.italic_angle, b.style.italic_angle, t),
+        },
         glyphs,
     }
 }
