@@ -63,6 +63,12 @@ Frozen for now:
 
 ## Session log
 
+### 2026-10-04 — Pushed the drawing slice
+
+- Focus: put the local slice on `main`.
+- Commit `168f996` (`168f996bc9caa9e56b53b3c7238f8a98b0b419c8`) is on `main`. It adds rectangle and oval, the preview pane, Gravity UI toolbar icons, SVG folder import, and the window mark. Pushed `dbca862..168f996` to `https://github.com/thavelin/Type-Foundry.git` `HEAD:main` over HTTPS. Origin stays the SSH remote. The tracking line may still say `origin/main` is gone. That was left alone.
+- Vostok outlines were not committed. The earlier session entries below still say "not pushed" because that was true when they were written.
+
 ### 2026-10-04 — Window icon
 
 - Focus: use Troy's mark as the Type Foundry icon.
