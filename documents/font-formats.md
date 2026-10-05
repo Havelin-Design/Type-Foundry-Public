@@ -13,8 +13,15 @@ Every format is read into, and written from, the same `typefoundry.font` model. 
 | `.ttc`, `.otc` (collections) | face 0 | no | Other faces are not read yet. |
 | `.woff` (WOFF 1) | yes | no | Tables are inflated and rebuilt into an sfnt, then read like `.ttf` or `.otf`. |
 | `.woff2` | refused | no | The error says to convert it to `.ttf` or `.otf` first. |
+| SVG folder | yes | no | One filled SVG per character, named with four hex digits (`0041.svg` is A). Save the result as `.json`, `.ufo`, or `.ttf`. |
 
 `ttf-parser` 0.25 reads binary fonts. It was already in the workspace as the export test reader. WOFF 1 is the same tables inside a zlib wrapper, so `flate2` inflates them and the importer rebuilds a normal sfnt before the parser reads it. The parser draws outlines through a pen, so the importer collects `move`, `line`, `quad`, `curve`, and `close` into closed contours. Reading the `post` table in one pass keeps a 45,000-glyph CJK collection to about a third of a second. The parser's own name lookup is quadratic.
+
+## SVG glyphs
+
+Point File > Open SVG folder… at a directory of filled outlines, or pass that directory to `foundry info`. Each file name is the Unicode scalar in four hex digits. A folder named `SVG` takes the parent folder's name, so `Vostok-Serif/SVG` opens as Vostok Serif.
+
+The letters are lined up from the drawings. Flat letters sit on one baseline. Round letters keep a little overshoot above and below the x-height or the cap height. Descenders hang below the baseline. The flat lowercase x-height becomes 500 units in a 1000-unit em, and the cap height, ascender, and descender are read from H, the ascenders, and the descenders. A missing space is added at 250 units. Each tight crop gets 40 units of sidebearing on both sides. A stroke that was not expanded to a fill is refused.
 
 ## What a binary import loses
 

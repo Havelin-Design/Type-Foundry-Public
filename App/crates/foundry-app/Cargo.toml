@@ -13,9 +13,15 @@ path = "src/main.rs"
 [dependencies]
 eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "persistence"] }
 foundry-api.workspace = true
+png = "0.17"
+# Path icons only. Text and system fonts stay off.
+resvg = { version = "0.45", default-features = false }
 rfd = "0.15"
 serde.workspace = true
 serde_json.workspace = true
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
 
 # winit needs a display backend on Linux. Windows and macOS need nothing extra.
 [target.'cfg(target_os = "linux")'.dependencies]

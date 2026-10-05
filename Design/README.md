@@ -4,19 +4,22 @@ The editor window is `typefoundry` (crate `App/crates/foundry-app`). It is a cli
 
 ## The window
 
+The window and the Start menu shortcut use the Type Foundry mark in `App/crates/foundry-app/assets/type-foundry-icon.png`.
+
 The window opens on the **overview**: every glyph as a thumbnail at one shared scale. Double-click a glyph, press Enter, or press Tab to open it in the **editor**. The menus hold everything, and Help > Keyboard shortcuts lists the keys.
 
-- **Menu bar.** File (New font, Open, Open UFO folder, Save, Save As, Quit), Edit (Undo and Redo with step counts, select all, deselect, delete points, smooth or corner, on-curve or off-curve, reverse contour direction), View (overview or editor, zoom, fit, panel and canvas toggles, Settings), Glyph (new, delete, previous, next), Tools (Select, Pen), Effects (Transform, the six effects, round coordinates), and Help.
-- **Toolbar.** Overview and Editor, Select and Pen, Undo and Redo, Effects, then the font name, a dot when there are unsaved changes, and the current glyph. File commands open Type Foundry or Three.js JSON, webfontjson, `.ttf`, `.otf`, `.ttc`, `.otc`, and `.woff` files, or a `.ufo` folder; Save As writes Type Foundry JSON, UFO, or TrueType. The last folder persists between launches.
+- **Menu bar.** File (New font, Open, Open UFO folder, Open SVG folder, Save, Save As, Quit), Edit (Undo and Redo with step counts, select all, deselect, delete points, smooth or corner, on-curve or off-curve, reverse contour direction), View (overview or editor, zoom, fit, panel and canvas toggles, Settings), Glyph (new, delete, previous, next), Tools (Select, Pen, Rectangle, Oval), Effects (Transform, the six effects, round coordinates), and Help.
+- **Toolbar.** Overview, Editor, Select, Pen, Rectangle, Oval, Undo, Redo, and Effects, each with a Gravity UI icon beside the name. The shortcut shows on hover. Then the font name, a dot when there are unsaved changes, and the current glyph. File commands open Type Foundry or Three.js JSON, webfontjson, `.ttf`, `.otf`, `.ttc`, `.otc`, and `.woff` files, a `.ufo` folder, or a folder of SVG glyphs named with four hex digits. Save As writes Type Foundry JSON, UFO, or TrueType. The last folder persists between launches.
 - **Overview.** A filter by name or character, a cell-size slider, and New glyph. Thumbnails are drawn once and cached until that glyph changes.
 - **Glyph list.** The left panel, with its own filter. Click to select, double-click to edit.
 - **Editor canvas.** Metric lines with labels, the advance box, black fill (nonzero, so counters stay open), and handles. Scroll or pinch zooms around the pointer, right- or middle-drag pans, and double-click on empty space refits. A panel opening or resizing does not move the glyph under the pointer.
 - **Select tool (V).** Click a point to select it, Shift-click to add or remove, drag empty space to box-select. Drag the selection to move it. Arrows nudge 1 unit, Shift-arrows 10. Delete removes points. Alt-click an outline to add a point there without changing the shape. Double-click an on-curve point to toggle smooth.
 - **Pen tool (P).** Click to start a contour and add on-curve points, Shift-click for off-curve points. Click the first point to close the contour. Esc stops.
+- **Rectangle (R) and Oval (O).** Drag on the current glyph. The box is normalized, so the drag direction does not matter. Either side shorter than 4 units is ignored. Snapping follows the canvas setting. Each shape is one `add_contour`, so one undo. An amber outline follows the pointer. Esc cancels the drag. The new contour's points are selected.
 - **Inspector.** Font name, units per em, and the four metrics. The glyph's name, Unicode, and advance, with sidebearings, ink box, and counts shown, plus Reverse, Round, and Delete. For one selected point: X, Y, on-curve or off-curve, and smooth. For several: Smooth, Corner, Delete, and Transform.
 - **Effects (Ctrl+E).** Slant, Scale, Rotate, Move, Flip horizontal, and Flip vertical, applied to the selected points, this glyph, or all glyphs. An AMBER outline previews the result on the canvas before Apply. Apply is one `transform` command, so one undo step even for the whole font.
-- **Preview strip.** Type any text to see it set in the font. Characters the font lacks show as a hollow box. Click a glyph in the strip to select it.
-- **Settings (Ctrl+,).** Fill, stroke, metrics, point numbers, pointer coordinates, snapping moves to whole units, handle size, overview cell size, preview size, and which panels show. Settings and the last folder persist between launches.
+- **Preview pane.** A resizable bottom panel. The copy column holds headline and paragraph blocks: type into them, switch a block's role, add one, or remove one. The format sheet beside it sets each block in the font, headlines at 48 pixels and paragraphs at 15, then a size waterfall of the first headline at 36, 24, 16, and 11. Lines wrap. Characters the font lacks show as a hollow box. Click a glyph in the sheet to select it. The copy persists between launches.
+- **Settings (Ctrl+,).** Fill, stroke, metrics, point numbers, pointer coordinates, snapping moves to whole units, handle size, overview cell size, and which panels show. Settings, the preview copy, and the last folder persist between launches.
 - **Status bar.** The last result in SIGNAL, or the error in ALERT, plus the tool, the selection count, and the zoom.
 
 Every change goes through a session command (`move_points`, `split_segment`, `add_contour`, `transform`, `set_metrics`, and the rest in `documents/api.md`), so undo covers all of it. The same commands are open to plugins and the CLI. The window never writes font fields itself. On-curve corner points draw as diamonds and smooth points as circles. A ring marks each contour's first point.
@@ -45,7 +48,7 @@ Chrome follows the Havelin v2 system surface used by Frame Extractor. Only these
 | ALERT | `#F07461` | Error status |
 | INVERSE | `#030303` | Text on FOCUS |
 
-Fonts are egui's defaults. Inter and IBM Plex are not vendored.
+Fonts are egui's defaults. Inter and IBM Plex are not vendored. Toolbar icons are the Gravity UI set (MIT, Yandex), vendored as SVG in `App/crates/foundry-app/icons` and tinted with the chrome text color.
 
 ## Canvas
 

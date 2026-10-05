@@ -6,6 +6,7 @@ mod error;
 mod font;
 mod import;
 mod sfnt;
+mod svgfont;
 mod ttf;
 mod typeface;
 mod ufo;

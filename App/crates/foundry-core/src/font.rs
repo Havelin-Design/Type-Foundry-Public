@@ -126,9 +126,21 @@ impl Font {
         Ok(font)
     }
 
-    /// Read `typefoundry.font` JSON, a `.ufo` directory, face 0 of a `.ttf`, `.otf`, `.ttc`,
-    /// or `.otc` file, or a WOFF 1 `.woff`.
+    /// Read `typefoundry.font` JSON, a `.ufo` directory, a folder of SVG glyphs, face 0 of
+    /// a `.ttf`, `.otf`, `.ttc`, or `.otc` file, or a WOFF 1 `.woff`.
     pub fn load(path: &Path) -> Result<Self, FoundryError> {
+        if path.is_dir() {
+            if crate::ufo::is_ufo_path(path) {
+                return crate::ufo::load_ufo(path);
+            }
+            if crate::svgfont::is_svg_font_dir(path) {
+                return crate::svgfont::load_svg_dir(path);
+            }
+            return Err(FoundryError::Import(format!(
+                "{} is not a .ufo folder or a folder of SVG glyphs. Name each file with four hex digits, like 0041.svg for A.",
+                path.display()
+            )));
+        }
         if crate::ufo::is_ufo_path(path) {
             return crate::ufo::load_ufo(path);
         }

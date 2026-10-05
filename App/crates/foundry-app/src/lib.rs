@@ -1,8 +1,8 @@
 //! Geometry for the drawing window: the glyph outline as the session reports it, the
 //! font-to-screen viewport, outline flattening, filling, and handle hit testing.
 //!
-//! Nothing here changes a font. The window reads glyphs with `Command::Glyph` and writes with
-//! `Command::MovePoint`.
+//! Nothing here changes a font. The window reads glyphs with the `glyph` command and writes
+//! through session commands such as `move_points` and `add_contour`.
 
 use serde_json::Value;
 
